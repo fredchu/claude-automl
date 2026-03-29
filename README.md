@@ -168,7 +168,7 @@ automl v4's mandatory skill system works best with these skill ecosystems. autom
 **[Anthropic Knowledge Work Plugins](https://github.com/anthropics/knowledge-work-plugins)** — Optional. Provides domain-specific skills:
 - Phase 2: `engineering:architecture` (refactoring), `design:design-critique`
 - Phase 3: `engineering:code-review`, `design:design-critique`
-- Also includes `polish` (writing), `swift-concurrency`, `swiftui-expert-skill`
+- Also includes `swift-concurrency`, `swiftui-expert-skill`
 
 **Without any of these installed**, automl still works — subagents use their built-in knowledge. But with the recommended skills, hit rates improve significantly and Phase 3 reviews catch more issues.
 
@@ -348,7 +348,7 @@ automl v4 的強制技能機制搭配這些 skill 生態系效果最好。automl
 **[Anthropic Knowledge Work Plugins](https://github.com/anthropics/knowledge-work-plugins)** — 選用。提供領域專業技能：
 - Phase 2：`engineering:architecture`（重構）、`design:design-critique`
 - Phase 3：`engineering:code-review`、`design:design-critique`
-- 也包含 `polish`（潤稿）、`swift-concurrency`、`swiftui-expert-skill`
+- 也包含 `swift-concurrency`、`swiftui-expert-skill`
 
 **以上都沒裝也能用** — subagent 會用自身的內建知識。但搭配推薦 skill，命中率顯著提升，Phase 3 review 也能抓到更多問題。
 
