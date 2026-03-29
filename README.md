@@ -152,6 +152,26 @@ Three subagents run in sequence: FINAL_VERIFICATION re-runs all evaluators and r
 - Phase 3 retry limit: max 2 retries with `retry_log` recording each regression's cause and affected tasks — prevents infinite Phase 3 loops
 - Phase 3 skill constraint: CODE_REVIEW and RISK_REVIEW subagents are restricted to their declared skills and diff scope — cannot expand into Phase 2 execution
 
+## Recommended Skills
+
+automl v4's mandatory skill system works best with these skill ecosystems. automl itself has no hard dependencies — you can always use `skill: none` — but the default skill mappings in `references/skill-mapping.md` reference skills from these projects.
+
+**[gstack](https://github.com/garrytan/gstack)** — Strongly recommended. Most of automl's default skill mappings come from gstack:
+- Phase 1: `/autoplan` (auto-runs CEO + eng + design review)
+- Phase 2: `/investigate` (systematic debugging), `/careful` (destructive command safety)
+- Phase 3: `/review` (pre-landing review with SQL/LLM/dependency security), `/cso` (security audit), `/qa-only` (report-only QA), `/benchmark` (performance regression), `/design-review` (visual QA)
+
+**[superpowers](https://github.com/obra/superpowers)** — Recommended. Provides several skills used in automl's skill mapping:
+- Phase 2: `superpowers:test-driven-development`, `superpowers:writing-skills`
+- Phase 3: `superpowers:requesting-code-review`, `superpowers:systematic-debugging`, `superpowers:verification-before-completion`
+
+**[Anthropic Knowledge Work Plugins](https://github.com/anthropics/knowledge-work-plugins)** — Optional. Provides domain-specific skills:
+- Phase 2: `engineering:architecture` (refactoring), `design:design-critique`
+- Phase 3: `engineering:code-review`, `design:design-critique`
+- Also includes `polish` (writing), `swift-concurrency`, `swiftui-expert-skill`
+
+**Without any of these installed**, automl still works — subagents use their built-in knowledge. But with the recommended skills, hit rates improve significantly and Phase 3 reviews catch more issues.
+
 ## License
 
 MIT
@@ -311,6 +331,26 @@ automl 提取或引導用戶提供四個必要元素。四者齊全時，直接�
 - 每次執行隔離在獨立的 `.automl/{run_id}/` 目錄
 - Phase 3 重試上限：最多重試 2 次，每次記錄 regression 原因和受影響 task — 防止 Phase 3 無限迴圈
 - Phase 3 skill 範圍限制：CODE_REVIEW 和 RISK_REVIEW subagent 限定在宣告的 skill 和 diff 範圍內，不能擴展成 Phase 2 執行
+
+## 推薦 Skill 生態系
+
+automl v4 的強制技能機制搭配這些 skill 生態系效果最好。automl 本身沒有硬依賴 — 你可以填 `skill: none` — 但 `references/skill-mapping.md` 的預設對照表引用了以下專案的 skill。
+
+**[gstack](https://github.com/garrytan/gstack)** — 強烈推薦。automl 大部分預設 skill 來自 gstack：
+- Phase 1：`/autoplan`（自動跑 CEO + eng + design 三視角 review）
+- Phase 2：`/investigate`（系統性 debug）、`/careful`（破壞性指令防護）
+- Phase 3：`/review`（含 SQL/LLM/dependency 安全分析）、`/cso`（安全審計）、`/qa-only`（純報告 QA）、`/benchmark`（效能回歸偵測）、`/design-review`（視覺 QA）
+
+**[superpowers](https://github.com/obra/superpowers)** — 推薦。提供多個 automl skill mapping 使用的技能：
+- Phase 2：`superpowers:test-driven-development`、`superpowers:writing-skills`
+- Phase 3：`superpowers:requesting-code-review`、`superpowers:systematic-debugging`、`superpowers:verification-before-completion`
+
+**[Anthropic Knowledge Work Plugins](https://github.com/anthropics/knowledge-work-plugins)** — 選用。提供領域專業技能：
+- Phase 2：`engineering:architecture`（重構）、`design:design-critique`
+- Phase 3：`engineering:code-review`、`design:design-critique`
+- 也包含 `polish`（潤稿）、`swift-concurrency`、`swiftui-expert-skill`
+
+**以上都沒裝也能用** — subagent 會用自身的內建知識。但搭配推薦 skill，命中率顯著提升，Phase 3 review 也能抓到更多問題。
 
 ## 授權
 
