@@ -1,4 +1,4 @@
-# Autonomous Evaluation Loop — Reference（Phase 0/1/3 + Evaluator + 參數 + 範例）
+# /automl — Reference（Phase 0/1/3 + Evaluator + 參數 + 範例）
 
 > 此檔案由 automl 主檔案按需載入。Phase 2 直跑不需要讀此檔案。
 
@@ -11,23 +11,20 @@
 
 ### 可串接的 skill（依情境選一個）
 
-**Ideation / brainstorming skill** — 最開放，用戶連「要不要做」都還不確定
+**`/office-hours`** — 最開放，用戶連「要不要做」都還不確定
 - 適用：「我有一個想法…」「這東西值不值得做？」
 - 產出：經過追問後的明確目標 + 可行性判斷
-- 串接方式：跑完後，把產出的 design doc 帶進 Phase 1
-- 如果你有 ideation/exploration 類 skill（例如 office-hours、思路討論、可行性分析），可以在此串接
+- 串接方式：跑完 office-hours 後，把產出的 design doc 帶進 Phase 1
 
-**Brainstorming skill** — 用戶知道要做什麼，需要釐清 how
+**`superpowers:brainstorming`** — 用戶知道要做什麼，需要釐清 how
 - 適用：「幫我寫一篇文章講 X」「我要加一個 Y 功能」
 - 產出：design spec（含 2-3 approaches + trade-offs）
-- 串接方式：brainstorming 的 terminal state 會自動接 task planning → 進 Phase 1
-- 如果你有 brainstorming/design exploration 類 skill，可以在此串接
+- 串接方式：brainstorming 的 terminal state 會自動接 writing-plans → 進 Phase 1
 
-**Plan challenge skill** — 用戶有計畫但沒被挑戰過
+**`/grill-me`** — 用戶有計畫但沒被挑戰過
 - 適用：「我想做 X，幫我想想有沒有漏洞」
 - 產出：被拷問後更堅固的計畫
-- 串接方式：plan challenge 結束後整理出明確目標 + 範圍，進 Phase 1
-- 如果你有 devil's advocate / plan stress-test 類 skill，可以在此串接
+- 串接方式：grill-me 結束後整理出明確目標 + 範圍，進 Phase 1
 
 **不串接，automl 自己引導** — 輕量場景
 - 從用戶的初始訊息中提取目標、成功條件、範圍
@@ -43,11 +40,10 @@
 
 ### 拆解：可串接的 skill
 
-**Task planning skill** — 程式碼場景最佳選擇
+**`superpowers:writing-plans`** — 程式碼場景最佳選擇
 - 把 spec 拆成 bite-sized tasks，每步有驗證指令
-- 如果你有 task planning / writing-plans 類 skill，可以在此串接
+- 產出格式：`docs/superpowers/plans/YYYY-MM-DD-<name>.md`
 - 每個 task = 2-5 分鐘，一個動作
-- 注意：如果你的 task planning skill 有預設的產出路徑，可忽略或依你的專案結構調整
 
 **不串接，automl 自己拆** — 非程式碼場景或簡單任務
 - 把大目標拆成可獨立檢驗的小塊
@@ -56,18 +52,15 @@
 
 ### 審視計畫：可串接的 skill（可選，用戶要求時才跑）
 
-**Plan review skill（CEO 視角）** — 挑戰格局
+**`/plan-ceo-review`** — 挑戰格局
 - 「有沒有想得更大的可能？」「前提假設對嗎？」
 - 四種模式：擴大範圍 / 選擇性擴大 / 鎖定範圍 / 縮小範圍
-- 如果你有 business/strategy 視角的 plan review skill，可以在此串接
 
-**Plan review skill（工程師技術審查）** — 鎖定技術
+**`/plan-eng-review`** — 鎖定技術
 - 架構、資料流、edge cases、效能、測試策略
-- 如果你有 technical review / architecture review 類 skill，可以在此串接
 
-**Plan review skill（設計品質檢查）** — 設計品質
+**`/plan-design-review`** — 設計品質
 - 每個設計維度 0-10 評分，說明怎麼做到 10 分
-- 如果你有 design quality review 類 skill，可以在此串接
 
 ### Phase 1 的產出
 
@@ -77,9 +70,11 @@
   Task 1: [描述]
     Evaluator: [shell 指令 或 checklist]
     範圍: [可修改的檔案/目錄]
+    Risk scenarios: [這個改動可能怎麼壞？列 3-5 個]
   Task 2: [描述]
     Evaluator: ...
     範圍: ...
+    Risk scenarios: ...
   ...
 
 全域參數：
@@ -88,6 +83,25 @@
   Direction：[higher_is_better / lower_is_better]
   Runs per iter：[預設 1]
 ```
+
+### Risk Scenarios（風險場景）
+
+每個 task 必須列出 3-5 個「這個改動可能怎麼壞」的場景。這是提前把風險攤開的機制，讓 evaluator 和 Phase 3 有具體的檢查項目。
+
+**撰寫原則：**
+- 聚焦在改動本身會引入的風險，不是泛泛的「可能會壞」
+- 每個場景是一個具體的 **觸發條件 + 預期行為**，例如：「連續兩次操作，第二次能正常啟動嗎？」
+- 不限領域——程式碼、文案、設定檔都適用
+
+**風險場景的用途（自動流入後續階段）：**
+- **流入 evaluator**：場景如果可以寫成 test case 或 evaluator 的額外 check → 加入 evaluator（程式碼場景最常見）
+- **流入 Phase 3 verification_checklist**：場景如果需要人工驗證 → 自動出現在 Phase 3 的 checklist
+- 一個場景可以同時流入兩者
+
+**範例（各領域）：**
+- 程式碼：「第一次操作正常，第二次能正常啟動嗎？」「A 模組改完，B 模組的依賴還正確嗎？」
+- 文案：「改了標題之後，body 的呼應還成立嗎？」「CTA 語氣和前文一致嗎？」
+- 設定檔：「改了 A 參數，B 參數會不會被影響？」「rollback 之後系統能恢復嗎？」
 
 ### Scope 重疊檢查（進 Phase 2 前必須做）
 
@@ -108,20 +122,50 @@ Phase 1 產出後直接進 Phase 2，不中斷問用戶。任務清單會寫入 
 
 ### 可串接的 skill
 
-**Verification skill** — 跑完才能說完
+**`superpowers:verification-before-completion`** — 跑完才能說完
 - 強制 evidence-based：跑驗證指令 → 讀 output → 確認 exit code → 才能 claim 完成
 - 防止「我覺得應該過了」的假完成
-- 如果你有 verification-before-completion / evidence-based verification 類 skill，可以在此串接
 
-**Code review skill** — 程式碼場景
+**`superpowers:requesting-code-review`** — 程式碼場景
 - 派 code-reviewer subagent 做 diff-aware review
 - Critical issue 立即修（回到 Phase 2 的 loop）
 - Important issue 修完再交付
-- 如果你有 code review / requesting-code-review 類 skill，可以在此串接
 
 **不串接，automl 自己驗收** — 單 task 或輕量場景
 - Phase 2 的外層回歸檢查已確保所有 task 同時通過
 - 此處再做最後一次 final verification 作為雙重保險
+
+### Risk Scenario Review（Phase 3 必做）
+
+Phase 3 的 review（無論串接哪個 skill）必須包含 **risk scenario 逐條驗證**：
+
+1. 讀取 Phase 1 定義的 `risk_scenarios`
+2. 對每個場景，trace 實際的 code path / 產出 / 設定，判定：
+   - ✅ Safe — 說明為什麼安全
+   - 🔴 Bug — 說明問題 + 建議修法
+3. 如果 reviewer 在分析中發現 Phase 1 沒列到的新風險場景 → 一併列出並驗證
+
+**這不是可選步驟。** Risk scenario review 是 Phase 3 的核心產出之一，和 code review findings 同等重要。
+
+### Verification Checklist（Phase 3 必輸出）
+
+Phase 3 結束時，必須輸出一份 **verification checklist**，供用戶做最終驗證：
+
+```
+Verification Checklist：
+1. [測試步驟] ✅/❌
+2. [測試步驟] ✅/❌
+...
+```
+
+**Checklist 來源（按優先順序合併）：**
+1. Phase 1 的 `risk_scenarios` 中需要人工驗證的項目
+2. Phase 3 review 中發現的新風險場景
+3. Code review / quality review 的 findings 對應的驗證項目
+
+**排序規則：** crash / data loss 風險在前，UX 退化在中，外觀/文案在後。
+
+**目的：** 用戶拿到 checklist 一次跑完，集中回報失敗項目，減少 ping-pong 來回。
 
 ---
 
@@ -209,7 +253,7 @@ Consecutive passes：[預設 3 — 連續幾次達標才算穩定]
 ```
 /automl 幫我寫一個 CLI 工具，可以查詢股票價格
 ```
-→ 偵測到有目標但缺 evaluator + 範圍 → 進入 Phase 1 拆解（建議用 task planning skill）
+→ 偵測到有目標但缺 evaluator + 範圍 → 進入 Phase 1 拆解（建議用 writing-plans）
 
 **全部就位（Phase 2）：**
 ```
@@ -236,7 +280,7 @@ max: 20
 ```
 /automl 幫我加一個用戶登入功能
 ```
-→ Phase 0: brainstorming → Phase 1: task planning + technical review → Phase 2: TDD loop → Phase 3: code review
+→ Phase 0: brainstorming → Phase 1: writing-plans + plan-eng-review → Phase 2: TDD loop → Phase 3: code review
 
 **文字 / 內容優化**
 ```
@@ -276,4 +320,4 @@ evaluator: nginx -t && curl -so /dev/null -w '%{time_total}' http://localhost | 
 ```
 /automl 重構 payment module，把 callback 全部改成 async/await
 ```
-→ Phase 0: plan challenge（追問邊界條件）→ Phase 1: task planning + CEO/business review（需不需要趁機改更大？）+ technical review（鎖定架構）→ Phase 2: TDD loop per task → Phase 3: verification + code review
+→ Phase 0: grill-me（追問邊界條件）→ Phase 1: writing-plans + plan-ceo-review（需不需要趁機改更大？）+ plan-eng-review（鎖定架構）→ Phase 2: TDD loop per task → Phase 3: verification + code review

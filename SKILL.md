@@ -16,7 +16,7 @@ allowed-tools:
   - Glob
 ---
 
-# Autonomous Evaluation Loop v3 — Claude Code Skill
+# /automl — Autonomous Evaluation Loop v3
 
 ## 核心公式
 
@@ -563,12 +563,18 @@ Phase 2：
   Task 1: baseline [X] → 最終 [Y]，N 輪（含 R 次回歸修復）
   Task 2: baseline [X] → 最終 [Y]，N 輪
   ...
-Phase 3：[final verification 結果 / code review 結果]
+Phase 3：[final verification 結果 / code review 結果 / risk scenario 結果]
 最後 commit：[hash + message]
 Run ID：{run_id}
 Baseline tag：automl-baseline-{run_id}（回到起點：git checkout automl-baseline-{run_id}）
 Changelog：.automl/{run_id}/changelog.md
 建議：[如果未達標，說明卡在哪裡 + changelog 中的模式分析]
+
+Verification Checklist：
+1. [測試步驟] ✅/❌
+2. [測試步驟] ✅/❌
+...
+（來源：Phase 1 risk_scenarios + Phase 3 review 新發現。依風險排序：crash > data loss > UX > cosmetic）
 ```
 
 **完成後清理：** 更新 state file 的 phase 為 `"done"`，保留檔案供日後參考（不刪除）。
