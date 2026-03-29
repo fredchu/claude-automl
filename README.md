@@ -34,7 +34,7 @@ all tasks passing?
 git clone https://github.com/fredchu/claude-automl ~/.claude/skills/automl
 ```
 
-**Three Inputs**
+**Four Inputs**
 
 **1. Goal** — what you want to achieve
 
@@ -42,12 +42,15 @@ git clone https://github.com/fredchu/claude-automl ~/.claude/skills/automl
 
 **3. Scope** — which files the agent is allowed to modify. Narrower is safer.
 
+**4. Skill** — which skill subagents load before each task. Use `/investigate` for debugging, `/review` for code review, or any other installed skill. Specify `none` only if no skill applies (justification required).
+
 **Usage**
 
 ```
 /automl make all tests pass
 evaluator: pytest tests/ -q
 scope: src/
+skill: /investigate
 ```
 
 That is all. automl handles the rest.
@@ -69,6 +72,15 @@ A git tag is created before any changes. The agent can only touch files inside t
 **Subagent architecture: main session dispatches only, never touches code directly**
 The main session reads state, decides what to dispatch, and updates scheduling fields. All code edits, evaluator runs, and git operations happen inside subagents. This keeps the main session context clean across long runs.
 
+**Mandatory skills: every task loads a specialized skill before executing**
+Phase 2 subagents invoke the declared skill via the `Skill` tool before starting each task — `/investigate` for debugging, `/review` for code review, TDD skill for new features. Specifying `none` requires explicit justification. A Skill Mapping table (`references/skill-mapping.md`) maps task types to recommended skills across all phases.
+
+**Phase 3 subagent verification: three independent subagents replace manual review**
+FINAL_VERIFICATION (haiku) re-runs all evaluators and risk scenario test cases. RISK_REVIEW (opus) traces each risk scenario through actual code paths. CODE_REVIEW (codex-worker / sonnet fallback) performs diff-aware review with security analysis. All three return structured JSON for reliable parsing.
+
+**Model routing: right model for each job**
+Every Agent call carries a `model` parameter — haiku for mechanical tasks, sonnet for execution, opus for deep analysis. Override per-model via `params.model_overrides` in the state file.
+
 ## Parameters
 
 **Goal** — what you want to achieve (required)
@@ -76,6 +88,8 @@ The main session reads state, decides what to dispatch, and updates scheduling f
 **Evaluator** — shell command or `checklist` (required)
 
 **Scope** — files or directories the agent may modify (required)
+
+**Skill** — skill subagents load before each Phase 2 task (required; use `none` with justification if no skill applies)
 
 **max** — max iterations per task. Default: 10. Maximum: 50.
 
@@ -87,20 +101,21 @@ The main session reads state, decides what to dispatch, and updates scheduling f
 
 **max_regression_rounds** — how many rounds of outer regression check to attempt before giving up on conflicting tasks. Default: 3.
 
-## Optional Skill Integrations
+## Skill Integrations
 
-automl's Phase 0, 1, and 3 can integrate with external skills if you have them installed. Phase 2 (the core loop) always runs standalone with no dependencies.
+Skills are a first-class part of automl v4. Phase 2 requires a skill on every task. Phases 0, 1, and 3 have recommended defaults.
 
-**Phase 0 — intent clarification (optional)**
-If your goal is vague, automl can hand off to an ideation, brainstorming, or exploration skill before defining the task list.
+**Phase 0 — intent clarification**
+Recommended: `/design-consultation`. If your goal is vague, automl hands off to a design or ideation skill before defining the task list. Falls back to self-guided clarification if not installed.
 
-**Phase 1 — task decomposition (optional)**
-For large goals, a task planning skill can break the work into small independently-evaluable tasks. A plan review skill (business, technical, or design perspective) can stress-test the plan before execution begins.
+**Phase 1 — task decomposition**
+Default: `/autoplan` (runs CEO + eng + design review with 6-principle auto-decisions). A plan review skill stress-tests the task list before execution begins. Falls back to automl's own decomposition if not installed.
 
-**Phase 3 — delivery (optional)**
-A verification skill confirms the final state with evidence before claiming completion. A code review skill catches issues in the diff before you ship.
+**Phase 2 — execution (required)**
+Each task must declare a skill. Recommended mappings: bug fix → `/investigate`, new feature → TDD skill, refactor → `/review`, performance → `/benchmark`. See `references/skill-mapping.md` for the full lookup table.
 
-None of these are required. If you do not have them, automl handles each phase itself.
+**Phase 3 — delivery verification (required)**
+Three subagents run in sequence: FINAL_VERIFICATION, RISK_REVIEW, CODE_REVIEW. Recommended skills: `/investigate` or `/cso` for risk review, `/review` for code review. Phase 3 retries up to 2 times if regressions are found, logging each failure cause.
 
 ## Examples
 
@@ -112,8 +127,8 @@ See the `examples/` directory:
 
 ## How It Works
 
-**Phase 0 — Clarify intent** (skipped if goal + evaluator + scope are already present)
-automl extracts or elicits the three required inputs. If you provide all three upfront, this phase is skipped entirely.
+**Phase 0 — Clarify intent** (skipped if goal + evaluator + scope + skill are already present)
+automl extracts or elicits the four required inputs. If you provide all four upfront, this phase is skipped entirely.
 
 **Phase 1 — Decompose + define evaluators** (skipped for single-task goals)
 Large goals get broken into smaller tasks, each with its own evaluator and scope. Scope overlap is checked before execution begins.
@@ -121,8 +136,8 @@ Large goals get broken into smaller tasks, each with its own evaluator and scope
 **Phase 2 — Dual-loop execution**
 The core engine. Main session dispatches subagents. Subagents modify, evaluate, keep or revert, and write to the changelog. Main session reads state and decides what to dispatch next.
 
-**Phase 3 — Delivery verification** (optional)
-Final check that everything still passes before declaring done.
+**Phase 3 — Delivery verification**
+Three subagents run in sequence: FINAL_VERIFICATION re-runs all evaluators and risk scenario test cases; RISK_REVIEW traces each risk scenario through actual code paths; CODE_REVIEW performs diff-aware review with security analysis. Phase 3 supports checkpoint/resume via `phase3.step` in the state file and retries up to 2 times if regressions are found.
 
 ## Safety
 
@@ -134,6 +149,8 @@ Final check that everything still passes before declaring done.
 - Max iterations cap prevents runaway token usage
 - Each evaluator call has a 120-second timeout
 - Every run is isolated in its own `.automl/{run_id}/` directory
+- Phase 3 retry limit: max 2 retries with `retry_log` recording each regression's cause and affected tasks — prevents infinite Phase 3 loops
+- Phase 3 skill constraint: CODE_REVIEW and RISK_REVIEW subagents are restricted to their declared skills and diff scope — cannot expand into Phase 2 execution
 
 ## License
 
@@ -177,7 +194,7 @@ for each task:
 git clone https://github.com/fredchu/claude-automl ~/.claude/skills/automl
 ```
 
-**三個必要元素**
+**四個必要元素**
 
 **1. 成功條件** — 你想達到什麼
 
@@ -185,12 +202,15 @@ git clone https://github.com/fredchu/claude-automl ~/.claude/skills/automl
 
 **3. 受控範圍** — agent 可以修改哪些檔案。範圍越窄越安全。
 
+**4. Skill** — subagent 在每個 task 執行前載入的 skill。除錯用 `/investigate`，code review 用 `/review`，或其他已安裝的 skill。只有在真的沒有適用 skill 時才指定 `none`（需附理由）。
+
 **使用方式**
 
 ```
 /automl 讓 pytest 全部通過
 evaluator: pytest tests/ -q
 範圍: src/
+skill: /investigate
 ```
 
 就這樣。automl 處理其餘一切。
@@ -212,6 +232,15 @@ Shell 模式使用 exit code 或數值分數，適合測試、build、linting、
 **Subagent 架構：主 session 只派工，從不直接碰程式碼**
 主 session 讀取狀態、決定派什麼工、更新調度欄位。所有程式碼修改、evaluator 執行、git 操作都在 subagent 內完成。這讓主 session 的 context 在長時間執行中保持乾淨。
 
+**強制 Skill：每個 task 在執行前都載入對應的專業 skill**
+Phase 2 subagent 在執行每個 task 前，透過 `Skill` 工具 invoke 宣告的 skill — 除錯用 `/investigate`，code review 用 `/review`，新功能用 TDD skill。指定 `none` 需附理由。`references/skill-mapping.md` 提供 task 類型到推薦 skill 的完整對照表，涵蓋所有 phase。
+
+**Phase 3 三 subagent 驗收：三個獨立 subagent 取代人工 review**
+FINAL_VERIFICATION（haiku）重跑所有 evaluator 和 risk scenario 測試案例。RISK_REVIEW（opus）追蹤每個 risk scenario 在實際程式碼路徑上的走向。CODE_REVIEW（codex-worker / sonnet fallback）做 diff-aware review 含安全分析。三者均回傳結構化 JSON，確保可靠解析。
+
+**Model routing：每個工作用對應的模型**
+每次 Agent 呼叫都帶 `model` 參數 — haiku 處理機械性任務，sonnet 執行主要工作，opus 做深度分析。可透過 state file 中的 `params.model_overrides` 自訂各 model 對應。
+
 ## 參數
 
 **成功條件** — 你想達到什麼（必填）
@@ -219,6 +248,8 @@ Shell 模式使用 exit code 或數值分數，適合測試、build、linting、
 **Evaluator** — shell 指令或 `checklist`（必填）
 
 **受控範圍** — agent 可以修改的檔案或目錄（必填）
+
+**Skill** — Phase 2 subagent 在每個 task 執行前載入的 skill（必填；若真的沒有適用 skill，填 `none` 並附理由）
 
 **max** — 每個 task 最多迭代次數。預設：10。最高：50。
 
@@ -230,20 +261,21 @@ Shell 模式使用 exit code 或數值分數，適合測試、build、linting、
 
 **max_regression_rounds** — 外層回歸檢查的最大輪數。預設：3。
 
-## 可選的 Skill 串接
+## Skill 串接
 
-automl 的 Phase 0、1、3 可以串接外部 skill（如果你有安裝的話）。Phase 2（核心迴圈）永遠獨立執行，無需任何外部依賴。
+Skill 在 automl v4 是一等公民。Phase 2 的每個 task 都必須宣告 skill。Phase 0、1、3 有預設的推薦 skill。
 
-**Phase 0 — 意圖釐清（可選）**
-目標模糊時，automl 可以交由 ideation、brainstorming 或探索類 skill 處理，再定義 task list。
+**Phase 0 — 意圖釐清**
+建議：`/design-consultation`。目標模糊時，automl 交由設計或 ideation skill 處理，再定義 task list。未安裝時退回 automl 自己引導。
 
-**Phase 1 — 任務拆解（可選）**
-大型目標可以交由 task planning skill 拆解為小型可獨立檢驗的任務。Plan review skill（商業、技術或設計視角）可以在執行前挑戰計畫假設。
+**Phase 1 — 任務拆解**
+預設：`/autoplan`（自動跑 CEO + eng + design 三視角 review，含 6 原則自動決策）。Plan review skill 在執行前挑戰 task list 假設。未安裝時退回 automl 自己拆解。
 
-**Phase 3 — 交付驗收（可選）**
-Verification skill 在宣稱完成前用證據確認最終狀態。Code review skill 在交付前審查 diff。
+**Phase 2 — 執行（必填）**
+每個 task 必須宣告 skill。推薦對應：bug 修復 → `/investigate`，新功能 → TDD skill，重構 → `/review`，效能 → `/benchmark`。完整對照表見 `references/skill-mapping.md`。
 
-這些都不是必須的。沒有安裝時，automl 自己處理各個 phase。
+**Phase 3 — 交付驗收（必填）**
+三個 subagent 依序執行：FINAL_VERIFICATION、RISK_REVIEW、CODE_REVIEW。Risk review 建議用 `/investigate` 或 `/cso`，code review 建議用 `/review`。發現 regression 最多重試 2 次，每次失敗原因記錄在 retry_log。
 
 ## 使用範例
 
@@ -255,8 +287,8 @@ Verification skill 在宣稱完成前用證據確認最終狀態。Code review s
 
 ## 運作原理
 
-**Phase 0 — 釐清意圖**（如果目標 + evaluator + 範圍已就位，跳過）
-automl 提取或引導用戶提供三個必要元素。三者齊全時，直接跳到 Phase 2。
+**Phase 0 — 釐清意圖**（如果目標 + evaluator + 範圍 + skill 已就位，跳過）
+automl 提取或引導用戶提供四個必要元素。四者齊全時，直接跳到 Phase 2。
 
 **Phase 1 — 拆解 + 定 evaluator**（單一 task 目標時跳過）
 大型目標拆成較小的 task，每個 task 有獨立的 evaluator 和受控範圍。執行前檢查範圍重疊。
@@ -264,8 +296,8 @@ automl 提取或引導用戶提供三個必要元素。三者齊全時，直接�
 **Phase 2 — 雙層迴圈執行**
 核心引擎。主 session 派 subagent。Subagent 修改、評估、keep 或 revert，並寫入 changelog。主 session 讀取 state 決定下一步。
 
-**Phase 3 — 交付驗收**（可選）
-宣告完成前的最後確認。
+**Phase 3 — 交付驗收**
+三個 subagent 依序執行：FINAL_VERIFICATION 重跑所有 evaluator 和 risk scenario 測試案例；RISK_REVIEW 追蹤每個 risk scenario 在實際程式碼路徑上的走向；CODE_REVIEW 做 diff-aware review 含安全分析。透過 state file 中的 `phase3.step` 欄位支援 checkpoint/resume，最多重試 2 次。
 
 ## 安全護欄
 
@@ -277,6 +309,8 @@ automl 提取或引導用戶提供三個必要元素。三者齊全時，直接�
 - Max iterations 上限防止無限燒 token
 - 每次 evaluator 執行有 120 秒 timeout
 - 每次執行隔離在獨立的 `.automl/{run_id}/` 目錄
+- Phase 3 重試上限：最多重試 2 次，每次記錄 regression 原因和受影響 task — 防止 Phase 3 無限迴圈
+- Phase 3 skill 範圍限制：CODE_REVIEW 和 RISK_REVIEW subagent 限定在宣告的 skill 和 diff 範圍內，不能擴展成 Phase 2 執行
 
 ## 授權
 

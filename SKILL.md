@@ -1,6 +1,6 @@
 ---
 name: automl
-version: 3.0.0
+version: 4.0.0
 description: |
   Autonomous Evaluation Loop — 從對齊意圖到自主執行的完整引擎。
   四階段：Phase 0 釐清 → Phase 1 拆解定標準 → Phase 2 執行+自我檢驗 loop → Phase 3 交付驗收。
@@ -16,7 +16,7 @@ allowed-tools:
   - Glob
 ---
 
-# /automl — Autonomous Evaluation Loop v3
+# /automl — Autonomous Evaluation Loop v4
 
 ## 核心公式
 
@@ -39,19 +39,20 @@ Phase 2: 雙層循環
 Phase 3: 交付驗收
 ```
 
-**三個必要元素（Phase 2 開始前必須就位）：**
+**四個必要元素（Phase 2 開始前必須就位）：**
 1. **成功條件** — 明確、可量化（測試通過、分數 > X、build 成功、字數 < Y、輸出符合格式…）
 2. **Evaluator** — shell 指令或 checklist，能判定 pass/fail/分數
 3. **受控範圍** — 哪些檔案 agent 可以修改（越窄越好）
+4. **強制技能** — 每個 task 必須指定執行技能（預設是「帶技能」，不帶才是例外）。如果真的不需要 skill，填 `skill: none` 且必須附理由。
 
 ---
 
 ## Phase 偵測 + 懶加載
 
-**偵測方式：** 看用戶的訊息是否已包含目標 + evaluator + 範圍。
+**偵測方式：** 看用戶的訊息是否已包含目標 + evaluator + 範圍 + 強制技能。
 
-- **三者齊全** → 直接進 Phase 2（本檔案已包含所有需要的資訊）
-- **缺任何一個** → 讀 `references/automl-reference.md` 取得 Phase 0/1 指引，引導用戶補齊
+- **四者齊全** → 直接進 Phase 2（本檔案已包含所有需要的資訊）
+- **缺任何一個** → 讀 `references/automl-reference.md` 取得 Phase 0/1 指引，引導用戶補齊；同時讀 `references/skill-mapping.md` 取得技能建議
 - **Phase 2 完成後** → 讀 `references/automl-reference.md` 取得 Phase 3 交付驗收指引
 
 > Phase 0/1/3 的 skill 串接、evaluator 模式詳解、參數說明、使用範例，全在 reference 檔案中。
@@ -73,11 +74,13 @@ Phase 2 期間，主 session 只做四件事：
 3. 收 subagent 回傳，更新 state file 的調度欄位（current_task、phase、regression_round、checkpoint_summary）
    （task 狀態欄位由 subagent 直接寫入，主 session 只讀取確認）
 4. 判斷是否進入下一個 task / 回歸檢查 / Phase 3
+5. Phase 3 期間，調度三個驗收 subagent（FINAL_VERIFICATION / RISK_REVIEW / CODE_REVIEW）
 
 主 session 禁止：
 - ❌ 直接使用 Edit / Write 修改受控範圍內的檔案
 - ❌ 直接用 Bash 跑 evaluator
 - ❌ 直接讀原始碼分析（subagent 會做）
+- ❌ Phase 3 期間直接讀 diff、做 review、跑驗證（所有驗收都透過 subagent）
 唯一例外：讀寫 .automl/{run_id}/ 下的 state.json 和 changelog.md
 
 違反此規則 = 上下文污染 = bug。
@@ -111,7 +114,7 @@ Phase 2 期間，主 session 只做四件事：
 ├── 所有 task 都 passed？
 │   └── 派 REGRESSION_CHECK_PROMPT subagent → 等回傳
 ├── regression 結果全部 pass？
-│   └── 進入 Phase 3
+│   └── 進入 Phase 3（見下方 Phase 3 調度邏輯）
 ├── regression 有失敗的 task？
 │   ├── regression_round < max_regression_rounds
 │   │   └── 對失敗的 task 重新派 TASK_LOOP_PROMPT → 完成後再跑 regression
@@ -119,6 +122,61 @@ Phase 2 期間，主 session 只做四件事：
 │       └── 停止，報告 task 衝突
 └── 不應到達此處 → 報告異常狀態
 ```
+
+### Phase 3 主 session 調度邏輯
+
+**斷點續傳**：Phase 3 開始時，讀 `state.json` 的 `phase3.step` 欄位，從上次中斷的 step 繼續（跟 Phase 2 的 Step 0 同理）。已完成的 step 結果保存在 state file 中，不重跑。
+
+**回退計數**：`retry_count` 是整個 Phase 3 流程共用的 counter。語意：**Phase 3 總共最多回退 Phase 2 兩次**。不管是哪個 step 觸發的回退，都計入同一個 counter。超過 2 次代表 Phase 2 反覆修不好，繼續重試沒有意義。
+
+**回退後的重啟流程**：任何 step 觸發回退時：
+1. `retry_count++`，記錄原因到 `retry_log`
+2. 重置 `phase3.step = 1`（Phase 3 從頭開始，因為 Phase 2 修改可能影響所有驗收結果）
+3. 把 `state.json` 的 `phase` 改回 `2`，記錄需要修復的 task
+4. Phase 2 對失敗的 task 重跑 loop → regression check 通過後 → `phase` 自動切回 `3`
+5. 主 session 讀到 `phase == 3` + `phase3.step == 1` → 從 FINAL_VERIFICATION 重新開始
+
+```
+讀 state.json（phase == 3）
+├── phase3.retry_count >= 2？
+│   └── 停止，報告「Phase 3 回退已達上限（2/2），仍有未解問題」
+│       列出每次回退的原因（從 phase3.retry_log 讀取）
+│
+├── 從 phase3.step 繼續（斷點續傳）：
+│
+├── step 1: 派 Claude agent (model="haiku") 跑 FINAL_VERIFICATION → 等回傳
+│   ├── 回傳正常 JSON？
+│   │   ├── 解析 status == "pass" → 記錄結果到 state，phase3.step = 2，繼續
+│   │   └── 解析 status == "fail" → retry_count++，記錄原因到 retry_log，回 Phase 2
+│   └── 回傳異常（非 JSON / timeout / subagent 錯誤）？
+│       ├── 重試 1 次（同一 step）
+│       └── 連續 2 次異常 → 停止，報告 FINAL_VERIFICATION subagent 錯誤
+│
+├── step 2: RISK_REVIEW（可能多個 dispatch，按 phase3_skill 分組）
+│   ├── 按 phase3_skill 分組 task 的 risk_scenarios
+│   │   例：group_A（/investigate）= Task 1, 3 的 scenarios；group_B（/cso）= Task 2 的 scenarios
+│   ├── 對每個 group 派一個 Claude agent (model="opus") 跑 RISK_REVIEW → 等回傳
+│   ├── 合併所有 group 的回傳結果
+│   │   ├── 全部 status == "safe" → 記錄結果，phase3.step = 3，繼續
+│   │   └── 任一 status == "has_bugs" → retry_count++，記錄 bug 到 retry_log，回 Phase 2
+│   └── 任一 group 回傳異常？ → 同上重試邏輯
+│
+├── step 3: 派 codex-worker / Claude agent (model="sonnet") 跑 CODE_REVIEW → 等回傳
+│   ├── 環境偵測：檢查 /Users/fredchu/bin/codex-dispatch 是否存在
+│   │   ├── 存在 → 用 codex-worker agent（ChatGPT 額度）
+│   │   └── 不存在 → 派 Claude Agent（model: sonnet）
+│   ├── 回傳正常 JSON？
+│   │   ├── 解析 status == "pass" 或 "has_important_only" → 記錄，繼續
+│   │   └── 解析 status == "has_critical" → retry_count++，記錄到 retry_log，回 Phase 2
+│   └── 回傳異常？ → 同上重試邏輯；codex-worker 失敗自動 fallback 到 Claude Agent（不算重試）
+│
+└── 三個都通過 → 編譯最終報告 + verification checklist，phase = "done"
+```
+
+**Timeout**：Phase 3 各 step 的 Agent call timeout：
+- FINAL_VERIFICATION（haiku）：300 秒
+- RISK_REVIEW（opus）：600 秒
+- CODE_REVIEW（codex-worker/sonnet）：600 秒
 
 ### 主 session 自我檢查（每次要使用工具前）
 
@@ -196,6 +254,26 @@ Phase 2 開始時，掃描 `.automl/` 目錄：
       "evaluator": "...",
       "evaluator_mode": "shell",
       "scope": "...",
+      "skill": "/investigate",
+      "phase3_skill": "/investigate",
+      "risk_scenarios": [
+        {
+          "id": "R1",
+          "description": "連續兩次操作，第二次能正常啟動嗎？",
+          "trigger": "第一次操作完成後立即開始第二次",
+          "expected": "第二次正常啟動，不 crash",
+          "has_test": true,
+          "test_command": "swift test --filter testDoubleStart"
+        },
+        {
+          "id": "R2",
+          "description": "改了 A 模組，B 模組的依賴還正確嗎？",
+          "trigger": "A 模組 API 變更",
+          "expected": "B 模組 build 通過 + 行為不變",
+          "has_test": false,
+          "test_command": null
+        }
+      ],
       "status": "passed",
       "baseline_score": 0.4,
       "final_score": 0.95,
@@ -204,6 +282,9 @@ Phase 2 開始時，掃描 `.automl/` 目錄：
     {
       "id": 2,
       "description": "...",
+      "skill": "none",
+      "phase3_skill": "/review",
+      "risk_scenarios": [],
       "status": "passed",
       "baseline_score": 0.6,
       "final_score": 1.0,
@@ -212,6 +293,9 @@ Phase 2 開始時，掃描 `.automl/` 目錄：
     {
       "id": 3,
       "description": "...",
+      "skill": "/investigate",
+      "phase3_skill": "/investigate",
+      "risk_scenarios": [],
       "status": "in_progress",
       "baseline_score": 0.3,
       "best_score": 0.6,
@@ -227,7 +311,24 @@ Phase 2 開始時，掃描 `.automl/` 目錄：
     "direction": "higher_is_better",
     "runs_per_iter": 1,
     "max_regression_rounds": 3,
-    "consecutive_passes": 3
+    "consecutive_passes": 3,
+    "model_overrides": {
+      "task_loop": "sonnet",
+      "risk_review": "opus"
+    }
+  },
+  "phase3": {
+    "step": 1,
+    "retry_count": 0,
+    "max_retries": 2,
+    "retry_log": [],
+    "code_review_executor": "codex-worker",
+    "final_verification": null,
+    "risk_review": null,
+    "code_review": null,
+    "critical_issues": [],
+    "important_issues": [],
+    "verification_checklist": []
   },
   "checkpoint_summary": {
     "updated_at": "2026-03-28T14:35:00",
@@ -270,7 +371,7 @@ git tag automl-baseline-{run_id}
 
 **a) 先派 baseline subagent：**
 ```
-Agent(prompt=BASELINE_PROMPT, description="automl baseline task M", mode="auto")
+Agent(prompt=BASELINE_PROMPT, description="automl baseline task M", mode="auto", model="haiku")
 ```
 
 Baseline subagent 的工作：跑 runs_per_iter 次 evaluator，回傳一行結果。
@@ -286,7 +387,8 @@ Baseline subagent 的工作：跑 runs_per_iter 次 evaluator，回傳一行結�
 Agent(
   prompt=TASK_LOOP_PROMPT,
   description="automl task M improvement loop",
-  mode="auto"
+  mode="auto",
+  model="sonnet"  # 預設；用戶可在 state.json params.model_overrides.task_loop 覆寫
 )
 ```
 
@@ -351,7 +453,8 @@ Subagent 回傳異常時的處理邏輯：
 Agent(
   prompt=REGRESSION_CHECK_PROMPT,
   description="automl regression check round R",
-  mode="auto"
+  mode="auto",
+  model="haiku"
 )
 ```
 
@@ -399,12 +502,25 @@ Consecutive passes：{consecutive_passes}
 == 背景（來自 Phase 0/1 的 context，可能為空）==
 {background_context}
 
+== 強制技能（dispatch 開始時載入一次，不可跳過）==
+（此區塊僅在 skill != none 時存在）
+名稱：{skill_name}
+Skill 呼叫方式：Skill tool，skill="{skill_name}"
+
+規則：
+- 第一輪 edit 之前，呼叫 Skill tool 載入技能
+- 載入後，跳過 gstack preamble（bash 腳本區塊）和 telemetry epilogue — 不要執行，直接使用技能的核心方法論
+- 後續各輪沿用已載入的技能引導，不重複呼叫 Skill tool（內容已在 context 中）
+- 只允許呼叫 {skill_name}，呼叫其他 skill = 違規
+- 跳過此步驟的改動 = 該輪作廢，必須 revert 後重來
+- Changelog 必須記錄「使用了哪個技能、技能給了什麼引導」
+
 == 環境 ==
 工作目錄：{cwd}
 版本控制：{vcs_mode}（git / file-backup）
 
 == 可用工具 ==
-Bash（跑 evaluator、git commit/checkout）、Read、Write（更新 state file）、Edit（修改受控範圍檔案）、Grep、Glob
+Bash（跑 evaluator、git commit/checkout）、Read、Write（更新 state file）、Edit（修改受控範圍檔案）、Grep、Glob、Skill（條件性：skill != none 時才加）
 
 == 版本控制操作 ==
 - **git 模式**：改善 → `git add {files} && git commit -m "automl: ..."`, 退步 → `git checkout -- {files}`
@@ -520,6 +636,7 @@ State file：{state_file_path}
 在 `.automl/{run_id}/changelog.md` 每輪追加一筆：
 ```
 ### Task M, Iter N — [keep ✅ / revert ❌]
+- 強制技能：{skill_name}，引導內容：[技能給了什麼建議]
 - 策略：[這輪要改什麼]
 - 原因：[為什麼選這個方向]
 - 改動摘要：[改了哪些檔案的哪些部分]
@@ -550,20 +667,26 @@ checkpoint 機制：
 
 ## 最終報告
 
-> Phase 3 的 skill 串接（verification、code review）在 reference 檔案。以下是 Phase 2 完成後主 session 輸出的報告格式。
+> Phase 3 的三個驗收 subagent 調度邏輯已在上方說明，prompt 模板在 reference 檔案。以下是 Phase 3 全部通過後，主 session 輸出的最終報告格式。
 
 ```
 === AutoML 完成 ===
 狀態：達標 ✅ / 未達標 ❌
 Phase 0：[用了什麼 skill / 跳過]
-Phase 1：[幾個 tasks / 用了什麼 skill / 跳過]
+Phase 1：[幾個 tasks / 用了 /autoplan / 跳過]
 Phase 2：
   內層總迭代：N 輪（K keep, R revert）
-  外層回歸檢查：R 輪（第 1 輪有 X 個 regression，最終全部通過 / 仍有衝突）
-  Task 1: baseline [X] → 最終 [Y]，N 輪（含 R 次回歸修復）
-  Task 2: baseline [X] → 最終 [Y]，N 輪
+  外層回歸檢查：R 輪
+  Task 1: baseline [X] → 最終 [Y]，N 輪，強制技能：{skill_name}
+  Task 2: baseline [X] → 最終 [Y]，N 輪，強制技能：{skill_name}
   ...
-Phase 3：[final verification 結果 / code review 結果 / risk scenario 結果]
+Phase 3：
+  Final Verification：pass ✅ / fail ❌（haiku，{N} evaluators + {M} risk scenarios）
+  Risk Review：safe ✅ / {N} bugs 🔴（opus，技能：{skill_name}）
+    [如有 bug，列出每個]
+  Code Review：pass ✅ / {N} critical 🔴（{executor}，技能：{skill_name}）
+    [如有 critical/important，列出每個]
+  Phase 3 回退次數：{retry_count}/{max_retries}
 最後 commit：[hash + message]
 Run ID：{run_id}
 Baseline tag：automl-baseline-{run_id}（回到起點：git checkout automl-baseline-{run_id}）
@@ -571,10 +694,10 @@ Changelog：.automl/{run_id}/changelog.md
 建議：[如果未達標，說明卡在哪裡 + changelog 中的模式分析]
 
 Verification Checklist：
-1. [測試步驟] ✅/❌
-2. [測試步驟] ✅/❌
+1. [測試步驟] ✅/❌ — 來源：Phase 1 risk scenario / Phase 3 review 發現
+2. [測試步驟] ✅/❌ — 來源：Phase 1 risk scenario / Phase 3 review 發現
 ...
-（來源：Phase 1 risk_scenarios + Phase 3 review 新發現。依風險排序：crash > data loss > UX > cosmetic）
+（排序：crash > data loss > UX > cosmetic）
 ```
 
 **完成後清理：** 更新 state file 的 phase 為 `"done"`，保留檔案供日後參考（不刪除）。
@@ -597,3 +720,7 @@ Verification Checklist：
 12. **Prompt 自帶 context** — subagent prompt 必須包含所有需要的資訊，不依賴 Phase 0/1 對話歷史
 13. **Subagent 迭代上限** — 單次 dispatch 最多 max_iter_per_dispatch 輪（預設 5），防止 subagent context 爆炸
 14. **不主動問用戶** — Phase 2 期間不使用 AskUserQuestion，所有進度透過 state file 被動提供
+15. **Phase 3 主 session 不動手** — Phase 3 期間主 session 禁止直接讀 diff、做 review、跑驗證。所有驗收都透過 subagent。主 session 只讀寫 `.automl/{run_id}/` 下的 state.json 和 changelog.md
+16. **Skill 限定** — subagent 只能呼叫被指定的 skill，呼叫其他 skill 視為違規
+17. **Phase 3 回退上限** — Phase 3 發現問題回 Phase 2 修復，最多 2 次。超過就停止，報告未解問題
+18. **Changelog skill 記錄** — 有強制技能的 task，changelog 每輪必須記錄 skill 使用痕跡。缺少記錄 = 該輪可疑，主 session 可要求重做

@@ -26,6 +26,11 @@
 - 產出：被拷問後更堅固的計畫
 - 串接方式：grill-me 結束後整理出明確目標 + 範圍，進 Phase 1
 
+**`/design-consultation`** — 涉及 UI/UX，需要競品研究
+- 適用：功能有 UI 元件，需要了解使用者體驗、競品做法
+- 產出：UI/UX 方向建議 + 設計決策依據
+- 串接方式：design-consultation 結束後，把設計決策帶進 Phase 1
+
 **不串接，automl 自己引導** — 輕量場景
 - 從用戶的初始訊息中提取目標、成功條件、範圍
 - 缺什麼就用合理預設填入，不中斷流程問用戶
@@ -40,10 +45,17 @@
 
 ### 拆解：可串接的 skill
 
-**`superpowers:writing-plans`** — 程式碼場景最佳選擇
+**`/autoplan`**（預設，強制跑）— 一次跑完三個 review + 自動決策
+- CEO / eng / design 三個 review 自動執行
+- 6 決策原則自動處理 mechanical decisions，只把 taste decisions 拉出來問用戶
+- 如果用戶明確只要跑其中一個 review → 允許覆寫（如「只跑 eng review」）
+- 輕量任務直接跳 Phase 2 → `/autoplan` 跳過
+
+**`superpowers:writing-plans`** — 程式碼場景拆 task 輔助
 - 把 spec 拆成 bite-sized tasks，每步有驗證指令
 - 產出格式：`docs/superpowers/plans/YYYY-MM-DD-<name>.md`
 - 每個 task = 2-5 分鐘，一個動作
+- 通常在 `/autoplan` 之後使用（autoplan 定方向，writing-plans 細化 task 清單）
 
 **不串接，automl 自己拆** — 非程式碼場景或簡單任務
 - 把大目標拆成可獨立檢驗的小塊
@@ -70,11 +82,15 @@
   Task 1: [描述]
     Evaluator: [shell 指令 或 checklist]
     範圍: [可修改的檔案/目錄]
-    Risk scenarios: [這個改動可能怎麼壞？列 3-5 個]
+    Risk scenarios: [3-5 個，見下方結構化格式]
+    Phase 2 強制技能: [skill 名稱]
+    Phase 3 強制技能: [skill 名稱]
   Task 2: [描述]
     Evaluator: ...
     範圍: ...
     Risk scenarios: ...
+    Phase 2 強制技能: none（理由：純 config 值替換，無需領域知識）
+    Phase 3 強制技能: /review
   ...
 
 全域參數：
@@ -92,6 +108,20 @@
 - 聚焦在改動本身會引入的風險，不是泛泛的「可能會壞」
 - 每個場景是一個具體的 **觸發條件 + 預期行為**，例如：「連續兩次操作，第二次能正常啟動嗎？」
 - 不限領域——程式碼、文案、設定檔都適用
+
+**Risk scenario 結構化格式（寫入 state file）：**
+```json
+{
+  "id": "R1",
+  "description": "連續兩次操作，第二次能正常啟動嗎？",
+  "trigger": "第一次操作完成後立即開始第二次",
+  "expected": "第二次正常啟動，不 crash",
+  "has_test": true,
+  "test_command": "swift test --filter testDoubleStart"
+}
+```
+- `has_test`：是否有對應的自動化 test case
+- `test_command`：有 test 時填 shell 指令；無 test 時填 null
 
 **風險場景的用途（自動流入後續階段）：**
 - **流入 evaluator**：場景如果可以寫成 test case 或 evaluator 的額外 check → 加入 evaluator（程式碼場景最常見）
@@ -120,32 +150,222 @@ Phase 1 產出後直接進 Phase 2，不中斷問用戶。任務清單會寫入 
 
 ## Phase 3 — 交付驗收
 
-### 可串接的 skill
+> Phase 3 由主 session 調度三個驗收 subagent，主 session 本身禁止直接讀 diff、做 review、跑驗證。
 
-**`superpowers:verification-before-completion`** — 跑完才能說完
-- 強制 evidence-based：跑驗證指令 → 讀 output → 確認 exit code → 才能 claim 完成
-- 防止「我覺得應該過了」的假完成
+### 三個驗收 subagent
 
-**`superpowers:requesting-code-review`** — 程式碼場景
-- 派 code-reviewer subagent 做 diff-aware review
-- Critical issue 立即修（回到 Phase 2 的 loop）
-- Important issue 修完再交付
+#### ① FINAL_VERIFICATION（機械性驗證）
 
-**不串接，automl 自己驗收** — 單 task 或輕量場景
-- Phase 2 的外層回歸檢查已確保所有 task 同時通過
-- 此處再做最後一次 final verification 作為雙重保險
+**執行者**：Claude Agent（固定 model="haiku"，不可覆寫）
+**工作**：重跑所有 evaluator + risk scenario 對應的 test case
+**強制技能**：`none`（預設）/ `/qa-only`（web app 專案）/ `/benchmark`（效能相關）
 
-### Risk Scenario Review（Phase 3 必做）
+```
+FINAL_VERIFICATION_PROMPT：
 
-Phase 3 的 review（無論串接哪個 skill）必須包含 **risk scenario 逐條驗證**：
+你是 automl 的 final verification subagent。重跑所有 evaluator 做最終確認。
 
-1. 讀取 Phase 1 定義的 `risk_scenarios`
-2. 對每個場景，trace 實際的 code path / 產出 / 設定，判定：
-   - ✅ Safe — 說明為什麼安全
-   - 🔴 Bug — 說明問題 + 建議修法
-3. 如果 reviewer 在分析中發現 Phase 1 沒列到的新風險場景 → 一併列出並驗證
+== 環境 ==
+工作目錄：{cwd}
 
-**這不是可選步驟。** Risk scenario review 是 Phase 3 的核心產出之一，和 code review findings 同等重要。
+== 可用工具 ==
+Bash, Read, Grep
+
+== 任務清單 ==
+{task_evaluator_list}
+（格式：Task ID | evaluator 指令 | evaluator 模式 | runs_per_iter | final_score | direction）
+
+== Risk Scenario Test Cases ==
+{risk_scenario_test_cases}
+（格式：場景描述 | 對應的驗證指令，可能為空）
+
+== 規則 ==
+- 按順序重跑每個 task 的 evaluator
+- 跑 risk scenario 中有對應驗證指令的 test case
+- 不修改任何檔案，只跑檢查
+- evaluator timeout 120 秒
+
+== 完成後回傳（嚴格遵守此 JSON 格式，方便主 session 解析）==
+\`\`\`json
+{
+  "status": "pass" | "fail",
+  "tasks": [
+    {"id": 1, "status": "pass", "score": 0.95},
+    {"id": 2, "status": "fail", "score": 0.3, "error": "錯誤摘要"}
+  ],
+  "risk_scenarios": [
+    {"id": "R1", "status": "pass", "description": "場景描述"},
+    {"id": "R2", "status": "fail", "description": "場景描述", "error": "錯誤摘要"},
+    {"id": "R3", "status": "skip", "description": "場景描述", "reason": "no test case"}
+  ]
+}
+\`\`\`
+```
+
+#### ② RISK_REVIEW（風險場景逐條驗證）
+
+**執行者**：Claude Agent（固定 model="opus"，trace code path 的關鍵步驟不能省）
+**工作**：讀 Phase 1 的 risk_scenarios，trace 實際 code path / 產出，判定 safe 或 bug
+**強制技能**：預設必填，主 session 根據領域從 Skill Mapping 對照表指定
+**多 skill 處理**：按 `phase3_skill` 分組，同一 skill 的 task 合併成一個 dispatch
+
+```
+RISK_REVIEW_PROMPT：
+
+你是 automl 的 risk review subagent。逐條驗證風險場景。
+
+== 可用工具 ==
+Bash, Read, Grep, Glob, Skill
+
+== 強制技能（不可跳過）==
+名稱：{skill_name}
+Skill 呼叫方式：Skill tool，skill="{skill_name}"
+
+規則：
+- 開始分析前，必須先呼叫 Skill tool 載入技能
+- 載入後，跳過 gstack preamble 和 telemetry epilogue — 直接使用技能的核心方法論
+- 只允許呼叫 {skill_name}，呼叫其他 skill = 違規
+- 依照技能的方法論逐條分析每個風險場景
+
+== 環境 ==
+工作目錄：{cwd}
+
+== 累積 Diff ==
+Baseline tag：{baseline_tag}
+（用 git diff {baseline_tag}..HEAD 查看所有改動）
+
+== Risk Scenarios（從 state file 的 risk_scenarios 欄位填入）==
+{risk_scenarios_list}
+（格式：Task ID | Scenario ID | 場景描述 | 觸發條件 | 預期行為 | has_test）
+
+== 規則 ==
+- 對每個場景，trace 實際的 code path / 產出 / 設定
+- 如果發現 Phase 1 沒列到的新風險場景，一併列出
+- 不修改任何檔案，只做分析
+
+== 完成後回傳（嚴格遵守此 JSON 格式）==
+\`\`\`json
+{
+  "status": "safe" | "has_bugs",
+  "scenarios": [
+    {"id": "R1", "status": "safe", "analysis": "為什麼安全"},
+    {"id": "R2", "status": "bug", "analysis": "問題描述", "fix": "建議修法"}
+  ],
+  "new_findings": [
+    {"id": "N1", "status": "safe" | "bug", "description": "新場景", "analysis": "..."}
+  ]
+}
+\`\`\`
+```
+
+#### ③ CODE_REVIEW（diff-aware review）
+
+**執行者**：codex-worker agent（優先）/ Claude Agent（fallback，model="sonnet"）
+**工作**：看整個 run 的累積 diff，抓架構問題、遺漏、副作用
+**強制技能**：預設 `/review`（程式碼）/ `design:design-critique`（非程式碼）
+**環境偵測**：Phase 3 開始時檢查 `/Users/fredchu/bin/codex-dispatch` 是否存在
+- 存在 → 用 codex-worker agent（轉嫁到 ChatGPT 額度）
+- 不存在 → 派 Claude Agent（model="sonnet"）
+
+```
+CODE_REVIEW_PROMPT：
+
+你是 automl 的 code review subagent。對整個 run 的累積改動做 review。
+
+== 可用工具 ==
+Bash, Read, Grep, Glob, Skill
+
+== 強制技能（不可跳過）==
+名稱：{skill_name}
+Skill 呼叫方式：Skill tool，skill="{skill_name}"
+
+規則：
+- 開始 review 前，必須先呼叫 Skill tool 載入技能
+- 載入後，跳過 gstack preamble 和 telemetry epilogue — 直接使用技能的核心 review 流程
+- 只允許呼叫 {skill_name}，呼叫其他 skill = 違規
+- 依照技能的完整 review 流程執行
+
+== 環境 ==
+工作目錄：{cwd}
+
+== 累積 Diff ==
+Baseline tag：{baseline_tag}
+（用 git diff {baseline_tag}..HEAD 查看所有改動）
+
+== 改動摘要（來自 changelog）==
+{changelog_summary}
+
+== Skill Review Checklist（方案 A：codex-worker 用，Claude fallback 時此欄位留空）==
+{skill_reference_summary}
+
+== 規則 ==
+- Critical issue 標記為必須回 Phase 2 修復
+- Important issue 標記為建議修復
+- 不修改任何檔案，只做分析
+- 如果有 Skill Review Checklist，逐條對照 diff 檢查
+
+== 完成後回傳（嚴格遵守此 JSON 格式）==
+\`\`\`json
+{
+  "status": "pass" | "has_critical" | "has_important_only",
+  "critical": [
+    {"id": "C1", "description": "問題描述", "impact": "什麼會壞", "fix": "怎麼修"}
+  ],
+  "important": [
+    {"id": "I1", "description": "問題描述", "fix": "怎麼修"}
+  ],
+  "minor": [
+    {"id": "M1", "description": "問題描述"}
+  ]
+}
+\`\`\`
+```
+
+**codex-worker 注意事項：**
+- codex-worker 沒有 Skill tool，強制技能改為方案 A：主 session 在派工前讀 skill reference，摘要塞進 `{skill_reference_summary}` 欄位
+- Claude fallback 時，`{skill_reference_summary}` 留空，由 subagent 自行呼叫 Skill tool（方案 B）
+- `{skill_reference_summary}` 的內容：從 skill 的 SKILL.md 中提取核心 review checklist（跳過 preamble 和 telemetry），控制在 ~2k tokens 以內
+
+### Phase 3 Subagent 失敗處理
+
+```
+Phase 3 subagent 回傳異常時的處理：
+
+1. 回傳非 JSON（無法解析結構化結果）
+   → 嘗試從文字中提取 pass/fail/safe/bug/critical 關鍵字做粗略判斷
+   → 如果能判斷 → 以粗略結果繼續（降級處理）
+   → 如果無法判斷 → 標記為 subagent_error，重試一次
+
+2. Subagent timeout / context 用盡
+   → 標記為 subagent_error，重試一次
+
+3. 同一 step 連續 2 次 subagent_error
+   → 停止整個 run，報告哪個 step 的 subagent 失敗
+   → 不算入 retry_count（這不是 Phase 2 能修的問題）
+
+4. codex-worker 失敗（CODE_REVIEW step）
+   → 自動 fallback 到 Claude Agent（sonnet），不算重試
+```
+
+### Phase 3 回退機制
+
+- Phase 3 最多回退 Phase 2 兩次（共用 `retry_count` counter）
+- FINAL_VERIFICATION fail、RISK_REVIEW has_bugs、CODE_REVIEW has_critical 都會觸發回退
+- 超過 2 次 → 停止，報告「Phase 3 回退已達上限，仍有未解問題」，列出每次回退原因
+
+### v3 → v4 遷移路徑
+
+**未完成的 v3 run（state.json 裡沒有新欄位）：**
+- Phase 2 Step 0（斷點偵測）讀到舊格式 state file 時：
+  - 檢查 task 是否有 `skill` 欄位
+  - 沒有 → 視為 v3 run，以 v3 模式繼續（不帶強制技能）
+  - 有 → 視為 v4 run
+- 不自動升級舊 state file，避免破壞進行中的 run
+
+**新的 run：** 一律使用 v4 格式
+
+**Phase 3 追蹤 block 不存在：**
+- 如果 state.json 沒有 `phase3` key → 視為 Phase 3 尚未開始，建立初始 block
 
 ### Verification Checklist（Phase 3 必輸出）
 
@@ -153,7 +373,7 @@ Phase 3 結束時，必須輸出一份 **verification checklist**，供用戶做
 
 ```
 Verification Checklist：
-1. [測試步驟] ✅/❌
+1. [測試步驟] ✅/❌ — 來源：Phase 1 risk scenario / Phase 3 review 發現
 2. [測試步驟] ✅/❌
 ...
 ```
@@ -164,8 +384,6 @@ Verification Checklist：
 3. Code review / quality review 的 findings 對應的驗證項目
 
 **排序規則：** crash / data loss 風險在前，UX 退化在中，外觀/文案在後。
-
-**目的：** 用戶拿到 checklist 一次跑完，集中回報失敗項目，減少 ping-pong 來回。
 
 ---
 

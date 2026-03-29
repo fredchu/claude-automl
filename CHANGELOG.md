@@ -1,5 +1,41 @@
 # Changelog
 
+## v4.0.0 — 2026-03-30
+
+Mandatory skills, Phase 3 subagent architecture, and model routing.
+
+### Breaking changes from v3
+
+- Fourth required element: **mandatory skill** — each task must specify a skill (or explicitly `none` with justification)
+- Phase 1 output format changed: added `Phase 2 強制技能`, `Phase 3 強制技能` fields
+- State file format changed: tasks now include `skill`, `phase3_skill`, `risk_scenarios` (structured); top-level adds `phase3` tracking block and `params.model_overrides`
+- Phase 3 is no longer optional text in the reference file — it has a full dispatcher decision tree in the main skill file
+
+### Features
+
+- **Mandatory skills**: subagents load specialized skills (e.g., `/investigate` for debugging, `/review` for code review) via `Skill` tool before each task. Default is "skill required" — `none` is the exception requiring justification.
+- **Phase 3 subagent architecture**: three dispatched subagents replace the old "main session does review" pattern:
+  - FINAL_VERIFICATION (haiku) — re-runs all evaluators + risk scenario test cases
+  - RISK_REVIEW (opus) — traces each risk scenario through actual code paths
+  - CODE_REVIEW (codex-worker / sonnet fallback) — diff-aware review with security analysis
+- **Model routing**: `model` parameter on every Agent call — haiku for mechanical tasks, sonnet for execution, opus for deep analysis. User-overridable via `params.model_overrides`.
+- **Skill Mapping table** (`references/skill-mapping.md`): lookup table from task type → recommended skill. Covers Phase 1 (`/autoplan`), Phase 2 (bug fix → `/investigate`, new feature → TDD, etc.), Phase 3 (risk review → `/investigate` or `/cso`, code review → `/review`).
+- **gstack integration**: Phase 0 adds `/design-consultation`, Phase 1 defaults to `/autoplan` (auto-runs CEO + eng + design review with 6-principle auto-decisions), Phase 2/3 use gstack skills (`/investigate`, `/review`, `/cso`, `/qa-only`, `/benchmark`).
+- **Structured JSON returns**: all Phase 3 subagent prompts require JSON output for reliable parsing.
+- **Phase 3 checkpoint/resume**: `phase3.step` field in state file enables resuming from any step after interruption.
+- **Phase 3 retry with log**: `retry_count` (max 2) with `retry_log` recording each regression's cause and affected tasks.
+- **gstack preamble skip**: subagent prompts explicitly instruct skipping gstack preamble/telemetry to avoid interference in tight loops.
+- **v3→v4 migration**: old state files without `skill` field continue running in v3 mode; new runs use v4 format.
+
+### PoC verifications
+
+- Skill tool works in subagents ✅
+- Agent tool `model` parameter works (haiku/sonnet/opus confirmed) ✅
+- gstack freeze hooks do NOT propagate to subagents ❌ — scope enforcement relies on prompt constraints (proven effective in v3)
+- gstack preamble does NOT auto-execute in subagents ✅ — but explicit skip instruction added as safety measure
+
+---
+
 ## v3.1.0 — 2026-03-29
 
 Risk scenario analysis and verification checklist — catch bugs before manual testing.
