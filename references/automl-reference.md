@@ -80,17 +80,34 @@
 ```
 任務清單：
   Task 1: [描述]
-    Evaluator: [shell 指令 或 checklist]
+    evaluator_structural（可選）：產出形式/格式正確的驗證
+    evaluator_semantic（必填）：產出意圖達成的驗證
+    evaluator_semantic_type（必填）：test_runner / eval_script / metric / checklist / assertion
+    evaluator_integration（feature 必填）：零件裝回系統後 end-to-end outcome 驗證
+    evaluator_integration_mode: shell / script / checklist
+    evaluator_regression（feature + refactor 必填）：既有行為沒壞的驗證
+    evaluator_regression_mode: shell / checklist
+    impact_path:
+      deliverable: [零件改動]
+      intermediate: [中間環節，可為 null（簡化形式）]
+      user_outcome: [用戶可觀察的結果]
     範圍: [可修改的檔案/目錄]
     Risk scenarios: [3-5 個，見下方結構化格式]
     Phase 2 強制技能: [skill 名稱]
     Phase 3 強制技能: [skill 名稱]
+    task_type: "feature" 或 "refactor"
   Task 2: [描述]
-    Evaluator: ...
+    evaluator_structural: ...
+    evaluator_semantic: ...
+    evaluator_semantic_type: assertion（僅限 refactor）
+    evaluator_integration: ...
+    evaluator_regression（feature + refactor 必填）：既有行為沒壞的驗證
+    evaluator_regression_mode: shell / checklist
     範圍: ...
     Risk scenarios: ...
     Phase 2 強制技能: none（理由：純 config 值替換，無需領域知識）
     Phase 3 強制技能: /review
+    task_type: "refactor"
   ...
 
 全域參數：
@@ -98,7 +115,53 @@
   Max iterations per dispatch：[預設 5]
   Direction：[higher_is_better / lower_is_better]
   Runs per iter：[預設 1]
+  Runs per iter（integration）：[預設 1]
 ```
+
+### Evaluator 品質關卡（Phase 1.5，三步）
+
+Phase 1 完成 state.json 後，依序執行三步品質關卡：
+
+**Phase 1.5a — Evaluator Audit 腳本（機械性，不可跳過）**
+`python3 ~/.claude/skills/automl/scripts/evaluator_audit.py .automl/{run_id}/state.json`
+腳本驗證 `evaluator_semantic_type` 分類、feature/assertion 互斥、scope 含 test file、impact_path、integration ≠ semantic、regression 等規則。
+`exit 1` = BLOCKED，修改 evaluator 設計後重跑。詳見 SKILL.md「Evaluator Audit Gate」章節。
+
+**Phase 1.5b — RED_TEAM Agent（對抗式驗證，feature task 必跑）**
+派獨立 subagent 嘗試 game evaluator：在 scope 內修改檔案讓所有 evaluator pass，但實際上沒達成 task 意圖。
+- 常見 game 手法：寫假 test、mock-only regression、硬塞 expected output、跳過 edge case
+- 最多 2 輪，找到 game 方式 → BLOCKED，找不到 → PASSED
+- refactor task 跳過（refactor 不改功能，紅隊無意義）
+- 詳見 SKILL.md「Phase 1.5b — RED_TEAM Agent」章節
+
+**Phase 1.5c — 自動修復（紅隊 BLOCKED 時）**
+1. 解析紅隊 JSON `findings`
+2. 根據 `fix_suggestion` 修改 evaluator
+3. 重跑 Phase 1.5a → 1.5b
+4. 最多 2 輪修復，仍 BLOCKED → 停止，讓用戶介入
+
+> v5.4 變更：刪除了 ①②③（反轉/意圖覆蓋/替代測試）和 falsification，改由紅隊 agent 實際嘗試 game 來驗證 evaluator 品質。
+
+### Phase 1 Integration Evaluator 設計流程
+
+Phase 1 拆解 task 後，對每個 feature task：
+
+1. **找 caller / 消費者**（程式：grep public API；文章：哪些段落引用了改動；策略：哪些模組依賴改動）
+2. **填 impact_path**：deliverable → intermediate → user_outcome
+3. **設計 evaluator_integration**：必須涵蓋 user_outcome 的驗證
+4. **設計 evaluator_regression**：驗證既有行為沒壞。判斷方法：「這個 test 在 baseline（改動前）會 pass 還是 fail？」Pass → regression，Fail → integration
+5. **跑 Phase 1.5（audit + 紅隊）**：通過才進 Phase 2
+
+### Evaluator 四層模型跨領域範例
+
+| 領域 | Structural | Semantic | Integration | Regression |
+|------|-----------|----------|-------------|------------|
+| 程式碼 | compiles/lint pass | known input → expected output | end-to-end pipeline test | 全部既有 test 通過 |
+| 交易策略 | backtest 能跑完不 crash | sharpe > X, drawdown < Y% | 完整回測（含交互作用） | 原策略 P&L 與凍結參考值一致 ± 1% |
+| 文章 | 字數/段落/格式合規 | checklist：論點完整、tone 正確 | 全文連貫性 + 結論合理性 | 既有章節核心論點語義不變 |
+| Prompt | output 能 parse、格式正確 | 品質評分 > threshold | 下游 pipeline 仍正常 | 既有功能輸出品質不下降 |
+| 設定檔 | syntax valid、service 能啟動 | 效能指標達標 | 系統整體健康檢查 | 既有功能 latency/throughput 不退化 |
+| ML 模型 | training completes, output valid shape | validation accuracy > threshold | full inference pipeline pass | 既有 benchmark 分數不退化 |
 
 ### Risk Scenarios（風險場景）
 
@@ -117,11 +180,13 @@
   "trigger": "第一次操作完成後立即開始第二次",
   "expected": "第二次正常啟動，不 crash",
   "has_test": true,
-  "test_command": "swift test --filter testDoubleStart"
+  "test_command": "swift test --filter testDoubleStart",
+  "evaluator_for_scenario": "swift test --filter testDoubleStart && exit 0 || exit 1"
 }
 ```
 - `has_test`：是否有對應的自動化 test case
 - `test_command`：有 test 時填 shell 指令；無 test 時填 null
+- `evaluator_for_scenario`（可選）：該場景的自動化驗證指令，可以是 shell 指令或 checklist；比 `test_command` 更彈性，允許多步驟組合驗證
 
 **風險場景的用途（自動流入後續階段）：**
 - **流入 evaluator**：場景如果可以寫成 test case 或 evaluator 的額外 check → 加入 evaluator（程式碼場景最常見）
@@ -173,15 +238,19 @@ Bash, Read, Grep
 
 == 任務清單 ==
 {task_evaluator_list}
-（格式：Task ID | evaluator 指令 | evaluator 模式 | runs_per_iter | final_score | direction）
+（格式：Task ID | evaluator_structural | evaluator_semantic | evaluator_integration | evaluator_regression | structural_mode | semantic_mode | integration_mode | regression_mode | regression_baseline_value | runs_per_iter | runs_per_iter_integration | final_score | direction）
 
-== Risk Scenario Test Cases ==
-{risk_scenario_test_cases}
-（格式：場景描述 | 對應的驗證指令，可能為空）
+== Risk Scenario Evaluators ==
+{risk_scenario_evaluators}
+（格式：場景 ID | 場景描述 | evaluator_for_scenario（可能為空）| test_command（可能為空））
 
 == 規則 ==
-- 按順序重跑每個 task 的 evaluator
-- 跑 risk scenario 中有對應驗證指令的 test case
+- 按順序重跑每個 task 的四層 evaluator：先 structural → 再 semantic → 再 integration → 再 regression
+- evaluator_structural 或 evaluator_semantic 失敗時，該 task 直接標 fail，不再跑 integration 和 regression
+- evaluator_integration 為 null 或 missing 時，integration status = skip（不 block）
+- evaluator_regression 為 null 或 missing 時，regression status = skip（不 block）
+- evaluator_regression_mode == checklist 時，從 state file 讀取對應 task 的 regression_checklist_items 逐條對照
+- 跑 risk scenario 中有 evaluator_for_scenario 或 test_command 的驗證
 - 不修改任何檔案，只跑檢查
 - evaluator timeout 120 秒
 
@@ -190,13 +259,27 @@ Bash, Read, Grep
 {
   "status": "pass" | "fail",
   "tasks": [
-    {"id": 1, "status": "pass", "score": 0.95},
-    {"id": 2, "status": "fail", "score": 0.3, "error": "錯誤摘要"}
+    {
+      "id": 1,
+      "status": "pass",
+      "structural": {"status": "pass", "score": 1.0},
+      "semantic": {"status": "pass", "score": 0.95},
+      "integration": {"status": "pass", "score": 0.9},
+      "regression": {"status": "pass", "score": 1.0}
+    },
+    {
+      "id": 2,
+      "status": "fail",
+      "structural": {"status": "pass", "score": 1.0},
+      "semantic": {"status": "fail", "score": 0.3, "error": "錯誤摘要"},
+      "integration": {"status": "skip", "reason": "not defined"},
+      "regression": {"status": "skip", "reason": "not defined"}
+    }
   ],
   "risk_scenarios": [
     {"id": "R1", "status": "pass", "description": "場景描述"},
     {"id": "R2", "status": "fail", "description": "場景描述", "error": "錯誤摘要"},
-    {"id": "R3", "status": "skip", "description": "場景描述", "reason": "no test case"}
+    {"id": "R3", "status": "skip", "description": "場景描述", "reason": "no evaluator defined"}
   ]
 }
 \`\`\`
@@ -234,9 +317,21 @@ Skill 呼叫方式：Skill tool，skill="{skill_name}"
 Baseline tag：{baseline_tag}
 （用 git diff {baseline_tag}..HEAD 查看所有改動）
 
+== Impact Path（v5.2 新增，可能為空）==
+{impact_path_list}
+（格式：Task ID | impact_path.deliverable | impact_path.intermediate | impact_path.user_outcome）
+
+== Impact Path 完整性檢查（不可跳過，如果資料存在）==
+逐條驗證：
+1. impact_path.intermediate 的每個環節是否仍然正確連接 deliverable → user_outcome？
+2. 是否有遺漏的中間環節？（改動可能引入新的依賴或副作用）
+3. user_outcome 是否真的可驗證？如果不可驗證，這本身就是風險。
+4. **regression evaluator 覆蓋檢查**：regression evaluator 是否真的覆蓋了 impact_path.user_outcome 的既有路徑？如果沒有 → 標 bug
+5. **test quality gate**：test_runner 類型的 evaluator 是否真的執行了有意義的驗證？（trace test code，確認不是假 test / mock-only / 硬塞 expected output）
+
 == Risk Scenarios（從 state file 的 risk_scenarios 欄位填入）==
 {risk_scenarios_list}
-（格式：Task ID | Scenario ID | 場景描述 | 觸發條件 | 預期行為 | has_test）
+（格式：Task ID | Scenario ID | 場景描述 | 觸發條件 | 預期行為 | has_test | evaluator_for_scenario）
 
 == 規則 ==
 - 對每個場景，trace 實際的 code path / 產出 / 設定
@@ -258,19 +353,21 @@ Baseline tag：{baseline_tag}
 \`\`\`
 ```
 
-#### ③ CODE_REVIEW（diff-aware review）
+#### ③ DELIVERABLE_REVIEW（交付物 review）
 
 **執行者**：codex-worker agent（優先）/ Claude Agent（fallback，model="sonnet"）
-**工作**：看整個 run 的累積 diff，抓架構問題、遺漏、副作用
-**強制技能**：預設 `/review`（程式碼）/ `design:design-critique`（非程式碼）
+**工作**：看整個 run 的累積改動，抓架構問題、遺漏、副作用，評估交付物是否完整達到意圖
+**強制技能**：
+- 程式碼專案：`/review`（review diff，邏輯同舊 CODE_REVIEW）
+- 非程式碼專案：`design:design-critique` 或其他適合領域的 skill
 **環境偵測**：Phase 3 開始時檢查 `/Users/fredchu/bin/codex-dispatch` 是否存在
 - 存在 → 用 codex-worker agent（轉嫁到 ChatGPT 額度）
 - 不存在 → 派 Claude Agent（model="sonnet"）
 
 ```
-CODE_REVIEW_PROMPT：
+DELIVERABLE_REVIEW_PROMPT：
 
-你是 automl 的 code review subagent。對整個 run 的累積改動做 review。
+你是 automl 的 deliverable review subagent。對整個 run 的累積改動做 review。
 
 == 可用工具 ==
 Bash, Read, Grep, Glob, Skill
@@ -288,21 +385,28 @@ Skill 呼叫方式：Skill tool，skill="{skill_name}"
 == 環境 ==
 工作目錄：{cwd}
 
-== 累積 Diff ==
+== 累積 Diff / 交付物 ==
 Baseline tag：{baseline_tag}
-（用 git diff {baseline_tag}..HEAD 查看所有改動）
+（程式碼專案：用 git diff {baseline_tag}..HEAD 查看所有改動）
+（非程式碼專案：直接讀取交付物檔案）
 
 == 改動摘要（來自 changelog）==
 {changelog_summary}
+
+== Task 意圖清單（review 重點：交付物是否完整達到每個 task 的意圖）==
+{task_intent_list}
+（格式：Task ID | task description | evaluator_semantic 摘要）
 
 == Skill Review Checklist（方案 A：codex-worker 用，Claude fallback 時此欄位留空）==
 {skill_reference_summary}
 
 == 規則 ==
+- 程式碼專案：review diff，抓架構問題、遺漏、副作用
+- 非程式碼專案：對照 task 意圖，評估交付物是否完整、是否達到意圖、有無遺漏
 - Critical issue 標記為必須回 Phase 2 修復
 - Important issue 標記為建議修復
 - 不修改任何檔案，只做分析
-- 如果有 Skill Review Checklist，逐條對照 diff 檢查
+- 如果有 Skill Review Checklist，逐條對照改動/交付物檢查
 
 == 完成後回傳（嚴格遵守此 JSON 格式）==
 \`\`\`json
@@ -343,14 +447,14 @@ Phase 3 subagent 回傳異常時的處理：
    → 停止整個 run，報告哪個 step 的 subagent 失敗
    → 不算入 retry_count（這不是 Phase 2 能修的問題）
 
-4. codex-worker 失敗（CODE_REVIEW step）
+4. codex-worker 失敗（DELIVERABLE_REVIEW step）
    → 自動 fallback 到 Claude Agent（sonnet），不算重試
 ```
 
 ### Phase 3 回退機制
 
 - Phase 3 最多回退 Phase 2 兩次（共用 `retry_count` counter）
-- FINAL_VERIFICATION fail、RISK_REVIEW has_bugs、CODE_REVIEW has_critical 都會觸發回退
+- FINAL_VERIFICATION fail、RISK_REVIEW has_bugs、DELIVERABLE_REVIEW has_critical 都會觸發回退
 - 超過 2 次 → 停止，報告「Phase 3 回退已達上限，仍有未解問題」，列出每次回退原因
 
 ### v3 → v4 遷移路徑
@@ -364,8 +468,44 @@ Phase 3 subagent 回傳異常時的處理：
 
 **新的 run：** 一律使用 v4 格式
 
+### v5.1 → v5.2 遷移路徑
+
+**未完成的 v5.1 run（state.json 裡沒有 `impact_path` / `evaluator_integration` 欄位）：**
+- Phase 2 斷點偵測讀到舊格式 state file 時：
+  - 檢查 task 是否有 `evaluator_integration` 欄位
+  - 沒有 → 視為 v5.1 run，以 v5.1 模式繼續（不帶 integration evaluator）
+  - 有 → 視為 v5.2 run
+- 不自動升級舊 state file，避免破壞進行中的 run
+
+**新的 run：** 一律使用 v5.2 格式（feature task 必填 `evaluator_integration`、`impact_path`）
+
+### v5.2 → v5.3 遷移路徑
+
+**未完成的 v5.2 run（state.json 裡沒有 `evaluator_regression` / `schema_version` 欄位）：**
+- Phase 2 斷點偵測讀到舊格式 state file 時：
+  - 檢查 state file 是否有 `schema_version` 欄位
+  - 沒有 → 視為 v5.2 run，regression 層 status = skip（不 block）
+  - 有且 >= "5.3" → 視為 v5.3 run
+- 不自動升級舊 state file，避免破壞進行中的 run
+
+**新的 run：** 一律使用 v5.3 格式（feature + refactor task 必填 `evaluator_regression`，state file 帶 `schema_version: "5.3"`）
+
 **Phase 3 追蹤 block 不存在：**
 - 如果 state.json 沒有 `phase3` key → 視為 Phase 3 尚未開始，建立初始 block
+
+### v5.3 → v5.4 遷移路徑
+
+**v5.4 的變更：**
+- 刪除 `falsification` 欄位
+- 刪除 ①②③ 品質關卡，改為 Phase 1.5b RED_TEAM agent
+- evaluator_audit.py 刪除 falsification checks，重編號 regression checks 為 #12-#14
+
+**未完成的 v5.3 run（state.json 有 `falsification` 欄位）：**
+- 以 v5.3 模式繼續（忽略 falsification，不跑紅隊）
+- RISK_REVIEW 跳過 falsification 交叉驗證（欄位可能存在但不再使用）
+- 不自動升級舊 state file
+
+**新的 run：** 一律使用 v5.4 格式（無 `falsification`，`schema_version: "5.4"`，Phase 1.5b 紅隊必跑）
 
 ### Verification Checklist（Phase 3 必輸出）
 
@@ -381,7 +521,7 @@ Verification Checklist：
 **Checklist 來源（按優先順序合併）：**
 1. Phase 1 的 `risk_scenarios` 中需要人工驗證的項目
 2. Phase 3 review 中發現的新風險場景
-3. Code review / quality review 的 findings 對應的驗證項目
+3. Deliverable review / quality review 的 findings 對應的驗證項目
 
 **排序規則：** crash / data loss 風險在前，UX 退化在中，外觀/文案在後。
 
@@ -498,7 +638,7 @@ max: 20
 ```
 /automl 幫我加一個用戶登入功能
 ```
-→ Phase 0: brainstorming → Phase 1: writing-plans + plan-eng-review → Phase 2: TDD loop → Phase 3: code review
+→ Phase 0: brainstorming → Phase 1: writing-plans + plan-eng-review → Phase 2: TDD loop → Phase 3: deliverable review
 
 **文字 / 內容優化**
 ```
@@ -538,4 +678,4 @@ evaluator: nginx -t && curl -so /dev/null -w '%{time_total}' http://localhost | 
 ```
 /automl 重構 payment module，把 callback 全部改成 async/await
 ```
-→ Phase 0: grill-me（追問邊界條件）→ Phase 1: writing-plans + plan-ceo-review（需不需要趁機改更大？）+ plan-eng-review（鎖定架構）→ Phase 2: TDD loop per task → Phase 3: verification + code review
+→ Phase 0: grill-me（追問邊界條件）→ Phase 1: writing-plans + plan-ceo-review（需不需要趁機改更大？）+ plan-eng-review（鎖定架構）→ Phase 2: TDD loop per task → Phase 3: verification + deliverable review

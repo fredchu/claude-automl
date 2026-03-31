@@ -1,5 +1,93 @@
 # Changelog
 
+## v5.4.0 — 2026-03-31
+
+Red team agent replaces falsification + manual quality gates.
+
+### Breaking changes from v5.3
+
+- Removed `falsification` field from state file schema (all three sub-fields)
+- Removed ①②③ quality gates (Inversion Test, Intent Coverage, Substitution Test)
+- Phase 1.5 restructured: now three steps (1.5a audit → 1.5b red team → 1.5c auto-fix)
+- RISK_REVIEW prompt no longer includes falsification cross-validation
+- `schema_version` in state file: `"5.4"`
+
+### Features
+
+- **Phase 1.5b — RED_TEAM agent**: independent subagent attempts to game evaluators by modifying scope files to make all evaluators pass without actually fulfilling task intent. Common game methods covered: fake tests, mock-only regression, hardcoded outputs, empty content that passes format checks, overfitting to backtest periods. 2-round safety cap prevents token waste.
+- **Phase 1.5c — auto-fix**: when red team returns BLOCKED, main session parses findings JSON, fixes evaluators, re-runs audit + red team. Max 2 fix rounds before escalating to user.
+- **Cross-domain game methods**: red team prompt includes domain-specific examples for code (fake tests, mocks), articles (padding word count, hollow rewrites), and quantitative strategies (overfitting, look-ahead bias).
+- **Test quality gate in RISK_REVIEW**: Phase 3 RISK_REVIEW now checks whether test_runner evaluators actually verify behavior (not fake tests / mock-only / hardcoded output).
+- **Version-controlled revert**: red team revert instruction adapts to git mode vs file-backup mode.
+
+### Migration
+
+- v5.3 runs with `falsification` field: continue in v5.3 mode (ignore falsification, skip red team)
+- New runs: v5.4 format (no `falsification`, red team mandatory for feature tasks)
+
+---
+
+## v5.3.0 — 2026-03-31
+
+Regression evaluator layer — verify existing behavior is preserved.
+
+### Breaking changes from v5.2
+
+- New required field: `evaluator_regression` (feature + refactor tasks)
+- New required field: `evaluator_regression_mode` (shell / checklist)
+- State file now includes `schema_version` field
+- evaluator_audit.py adds checks #12-#14 (regression mandatory, regression ≠ other layers, regression not trivial) — version-gated to schema_version >= 5.3
+
+### Features
+
+- **Four-layer evaluator model**: structural → semantic → integration → regression. All four must pass for a task to be considered done.
+- **Regression evaluator**: verifies existing behavior is preserved after changes. Design heuristic: "would this test pass on the baseline (before changes)?" Yes → regression, No → integration.
+- **Baseline inversion for regression**: regression evaluator must PASS on baseline (verifying it tests existing behavior), while semantic/integration must FAIL on baseline (verifying they test new behavior).
+- **Non-deterministic regression**: `regression_baseline_value` field for fuzzy domains — regression result must be >= baseline × 0.99 (1% tolerance).
+- **Regression triage**: regression failure triggers causal analysis — if caused by current change → revert + reset; if unrelated → re-run to confirm, then mark REGRESSION_INVESTIGATION_NEEDED.
+
+### Migration
+
+- v5.2 runs without `schema_version`: continue in v5.2 mode (regression layer = skip)
+- New runs: v5.3 format with `schema_version: "5.3"`
+
+---
+
+## v5.2.0 — 2026-03-31
+
+Integration evaluator + impact path — verify the part works in the whole.
+
+### Breaking changes from v5.1
+
+- New required field: `evaluator_integration` (feature tasks, no opt-out)
+- New required field: `impact_path` (feature tasks)
+- evaluator_audit.py adds checks #9-#11 (impact_path mandatory, integration mandatory, integration ≠ semantic)
+
+### Features
+
+- **Integration evaluator**: end-to-end outcome verification after the modified component is placed back in the system. Runs after semantic pass, before regression.
+- **Impact path**: three-field structure (deliverable → intermediate → user_outcome) that traces how a code change reaches the user. Simplified form allowed (intermediate = null).
+- **Cross-domain evaluator examples table**: structural/semantic/integration/regression examples for code, trading strategies, articles, prompts, config files, and ML models.
+
+### Migration
+
+- v5.1 runs without `impact_path` / `evaluator_integration`: continue in v5.1 mode
+- New runs: v5.2 format
+
+---
+
+## v5.1.0 — 2026-03-30
+
+Evaluator audit gate — mechanical quality check between Phase 1 and Phase 2.
+
+### Features
+
+- **evaluator_audit.py**: Python script that mechanically validates evaluator design before Phase 2 begins. Checks: type classification, feature/assertion mutual exclusion, test file in scope, checklist minimum items, metric comparison, structural ≠ semantic, blacklist (grep/wc/test -f not valid as semantic), empty value detection.
+- **evaluator_semantic_type**: mandatory field classifying each evaluator as test_runner / eval_script / metric / checklist / assertion. Each type has specific mechanical rules enforced by the audit script.
+- **Evaluator quality gate (Phase 2 baseline)**: feature tasks with semantic evaluator already passing at baseline are blocked (EVALUATOR_QUALITY_ISSUE) — prevents evaluators with no discriminative power from entering the loop.
+
+---
+
 ## v4.0.0 — 2026-03-30
 
 Mandatory skills, Phase 3 subagent architecture, and model routing.
