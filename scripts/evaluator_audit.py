@@ -328,6 +328,26 @@ def audit_task(task: dict, schema_version: tuple = (5, 2)) -> dict:
                         'must verify actual behavior, not just form'
                     )
 
+    # --- Check v5.5: required_tests validation ---
+    # Check: required_tests non-empty for feature tasks that went through red team (v5.5+)
+    # Only enforce if schema_version >= 5.5 AND required_tests field exists
+    if schema_version >= (5, 5) and "required_tests" in task:
+        if task.get("task_type") == "feature":
+            rt = task.get("required_tests")
+            if rt is not None and len(rt) == 0:
+                # required_tests exists but is empty — only flag if red team was supposed to run
+                # (Phase 1.5b runs on feature tasks, so if field exists but empty = suspicious)
+                pass  # Don't block — empty is OK before red team runs
+            if rt is not None:
+                for item in rt:
+                    if not item.get("method") or not item.get("level") or not item.get("behavior"):
+                        reasons.append("required_tests item missing method/level/behavior")
+                    if item.get("behavior") and len(item["behavior"]) < 20:
+                        reasons.append(f"required_tests behavior too short: '{item['behavior']}' (need >=20 chars)")
+                    valid_levels = {"unit", "integration", "e2e"}
+                    if item.get("level") and item["level"] not in valid_levels:
+                        reasons.append(f"required_tests level '{item['level']}' not in {valid_levels}")
+
     return {
         'id': tid,
         'verdict': 'fail' if reasons else 'pass',

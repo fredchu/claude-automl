@@ -94,6 +94,8 @@
     範圍: [可修改的檔案/目錄]
     Risk scenarios: [3-5 個，見下方結構化格式]
     Phase 2 強制技能: [skill 名稱]
+    Phase 2 方法論技能（methodology_skill）: [TDD skill 名稱，或 null]
+    required_tests: [紅隊產出的必要測試清單，Phase 1 時為空，Phase 1.5c 填入]
     Phase 3 強制技能: [skill 名稱]
     task_type: "feature" 或 "refactor"
   Task 2: [描述]

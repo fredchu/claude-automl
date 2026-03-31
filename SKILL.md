@@ -1,6 +1,6 @@
 ---
 name: automl
-version: 5.4.0
+version: 5.5.0
 description: |
   Autonomous Evaluation Loop — 從對齊意圖到自主執行的完整引擎。
   四階段：Phase 0 釐清 → Phase 1 拆解定標準 → Phase 2 執行+自我檢驗 loop → Phase 3 交付驗收。
@@ -186,7 +186,11 @@ Regression：{evaluator_regression}
       "id": "C1",
       "game_method": "描述 game 手法",
       "evaluator_gap": "哪個 evaluator 被 game 了、為什麼",
-      "fix_suggestion": "建議怎麼修 evaluator"
+      "required_test": {
+        "method": "test 方法名稱（駝峰式，描述要驗證的行為）",
+        "level": "unit | integration | e2e",
+        "behavior": "這個 test 必須驗證什麼行為（≥20 字元，具體到可以據此寫 test）"
+      }
     }
   ]
 }
@@ -201,12 +205,17 @@ Regression：{evaluator_regression}
 
 紅隊回傳 `BLOCKED` 時，主 session 執行以下流程：
 
-1. **解析紅隊 JSON**：讀取 `findings` 陣列
-2. **修 evaluator**：根據 `fix_suggestion`，修改對應 evaluator（更嚴格的 assertion、加 integration test 等）
-3. **更新 state.json**：把修改後的 evaluator 寫入 task
-4. **重跑 Phase 1.5a**：evaluator_audit.py（確保修改後仍通過機械性檢查）
-5. **重跑 Phase 1.5b**：紅隊（確認 game 已被堵住）
-6. **最多 2 輪修復**：修復 2 次後紅隊仍 BLOCKED → 停止，報告無法解決，讓用戶介入
+1. **解析紅隊 JSON**：讀取 `findings` 陣列中每個 finding 的 `required_test`
+2. **累積 required_tests**：把紅隊建議的 test 加入 task 的 `required_tests` 陣列（不刪既有的）
+3. **自動設定 methodology_skill**：如果 `required_tests` 非空且 `evaluator_semantic_type == "test_runner"`，自動把 `methodology_skill` 設為 `"superpowers:test-driven-development"`
+4. **更新 state.json**：寫入 `required_tests` + `methodology_skill`
+5. **重跑 Phase 1.5a**：evaluator_audit.py（確保修改後仍通過機械性檢查）
+6. **重跑 Phase 1.5b**：紅隊（紅隊 prompt 會帶上已有的 required_tests，讓紅隊嘗試繞過它們）
+7. **最多 2 輪修復**：修復 2 次後紅隊仍 BLOCKED → 停止，報告無法解決，讓用戶介入
+
+> **設計意圖：** 紅隊找到的 game 向量被轉化成「必須存在且通過的測試」，而非 grep 修補。
+> Phase 2 subagent 拿到 required_tests 後，必須按 TDD 流程寫出這些測試（RED: 先寫 test → 驗 FAIL → GREEN: 寫 implementation → 驗 PASS）。
+> 這確保測試有鑑別力（FAIL 過才 PASS = 測試真的在驗東西）。
 
 ---
 
@@ -416,7 +425,15 @@ Phase 2 開始時，掃描 `.automl/` 目錄：
       "task_type": "feature",
       "scope": "...",
       "skill": "/investigate",
+      "methodology_skill": "superpowers:test-driven-development",
       "phase3_skill": "/investigate",
+      "required_tests": [
+        {
+          "method": "testPreferredLanguage_persistsViaAppGroupAcrossInit",
+          "level": "integration",
+          "behavior": "設定 preferredLanguage 為 zh-TW，用新的 UserDefaults(suiteName:) instance 讀取，值為 zh-TW"
+        }
+      ],
       "impact_path": {
         "deliverable": "...",
         "intermediate": ["...", "..."],
@@ -705,18 +722,39 @@ Consecutive passes：{consecutive_passes}
 == 背景（來自 Phase 0/1 的 context，可能為空）==
 {background_context}
 
-== 強制技能（dispatch 開始時載入一次，不可跳過）==
+== 強制技能（dispatch 開始時載入，不可跳過）==
 （此區塊僅在 skill != none 時存在）
-名稱：{skill_name}
+
+1. 方法論技能（methodology_skill，可能為 null）：{methodology_skill_name}
+2. 領域技能（skill）：{skill_name}
+
 Skill 呼叫方式：Skill tool，skill="{skill_name}"
 
 規則：
-- 第一輪 edit 之前，呼叫 Skill tool 載入技能
+- 第一輪 edit 之前，依序呼叫 Skill tool 載入：先 methodology_skill（建立做事節奏），再 skill（提供領域知識）
 - 載入後，跳過 gstack preamble（bash 腳本區塊）和 telemetry epilogue — 不要執行，直接使用技能的核心方法論
 - 後續各輪沿用已載入的技能引導，不重複呼叫 Skill tool（內容已在 context 中）
-- 只允許呼叫 {skill_name}，呼叫其他 skill = 違規
+- 只允許呼叫 {methodology_skill_name} 和 {skill_name}，呼叫其他 skill = 違規
 - 跳過此步驟的改動 = 該輪作廢，必須 revert 後重來
 - Changelog 必須記錄「使用了哪個技能、技能給了什麼引導」
+
+== Required Tests（紅隊產出的必要測試清單，可能為空）==
+{required_tests_json}
+
+required_tests 覆寫規則（最高優先級）：
+- required_tests 的 level 和 behavior 描述優先於 methodology skill 的預設偏好
+- methodology skill 的「minimal」「one behavior」指的是每個 RED-GREEN 循環的粒度，不是限制測試層級
+- level == "unit" → 可以 mock 外部依賴，測單一模組
+- level == "integration" → 禁止 mock 被測模組間的依賴，必須真的串接
+- level == "e2e" → 禁止所有 mock，完整系統路徑
+- 如果 methodology skill 的指引與 required_tests 的 level 衝突，以 required_tests 為準
+
+TDD 分段（required_tests 非空且 methodology_skill 為 TDD 時強制執行）：
+- RED：先寫 required_tests 中所有測試（不寫 implementation）→ 跑 evaluator → 必須 FAIL
+  - FAIL = 測試有鑑別力 ✅，進入 GREEN
+  - PASS = 測試是假的 → 重寫測試，不計入迭代次數
+- GREEN：寫最小 implementation 讓測試 PASS → 跑 evaluator → 必須 PASS
+- REFACTOR：清理程式碼，保持測試 PASS
 
 == 環境 ==
 工作目錄：{cwd}
@@ -987,7 +1025,7 @@ Verification Checklist：
 13. **Subagent 迭代上限** — 單次 dispatch 最多 max_iter_per_dispatch 輪（預設 5），防止 subagent context 爆炸
 14. **不主動問用戶** — Phase 2 期間不使用 AskUserQuestion，所有進度透過 state file 被動提供
 15. **Phase 3 主 session 不動手** — Phase 3 期間主 session 禁止直接讀 diff、做 review、跑驗證。所有驗收都透過 subagent。主 session 只讀寫 `.automl/{run_id}/` 下的 state.json 和 changelog.md
-16. **Skill 限定** — subagent 只能呼叫被指定的 skill，呼叫其他 skill 視為違規
+16. **Skill 限定** — subagent 只能呼叫被指定的 skill（含 methodology_skill），呼叫其他 skill 視為違規
 17. **Phase 3 回退上限** — Phase 3 發現問題回 Phase 2 修復，最多 2 次。超過就停止，報告未解問題
 18. **Changelog skill 記錄** — 有強制技能的 task，changelog 每輪必須記錄 skill 使用痕跡。缺少記錄 = 該輪可疑，主 session 可要求重做
 19. **Evaluator 品質關卡** — feature 型 task 的 evaluator_semantic 在 baseline 階段如果已 pass，停止該 task 並報告 evaluator 品質不足（EVALUATOR_QUALITY_ISSUE）。不允許無鑑別力的 evaluator 進入 loop。
@@ -1019,3 +1057,19 @@ Verification Checklist：
 - 不自動升級舊 state file
 
 **新的 run：** 一律使用 v5.4 格式（無 `falsification`，Phase 1.5b 紅隊必跑）
+
+## v5.4 → v5.5 遷移
+
+**v5.5 的變更：**
+- 新增 `required_tests` 欄位（task 層級）：紅隊產出的必要測試清單，Phase 2 subagent 必須寫出並通過
+- 新增 `methodology_skill` 欄位（task 層級）：方法論技能（如 TDD），與領域 skill 分離
+- Phase 1.5c 從「修 evaluator grep」改為「萃取 required_tests」
+- RED_TEAM_PROMPT 回傳格式：`fix_suggestion` → `required_test`（結構化測試需求）
+- TASK_LOOP_PROMPT 支援雙 skill 載入（methodology + domain）+ required_tests level 覆寫 + TDD 分段
+- evaluator_audit.py 新增：紅隊跑過的 feature task，`required_tests` 非空檢查
+
+**未完成的 v5.4 run（state.json 沒有 `required_tests` 欄位）：**
+- 以 v5.4 模式繼續（無 required_tests，紅隊仍用 fix_suggestion）
+- 不自動升級舊 state file
+
+**新的 run：** 一律使用 v5.5 格式（schema_version: "5.5"）

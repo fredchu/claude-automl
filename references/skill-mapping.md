@@ -60,6 +60,20 @@
 
 ---
 
+## Methodology Skill（v5.5+）
+
+`methodology_skill` 是獨立於領域 skill 的方法論技能，控制「怎麼做」的節奏。
+
+| 條件 | methodology_skill | 說明 |
+|------|-------------------|------|
+| `required_tests` 非空 + `evaluator_semantic_type == "test_runner"` | `superpowers:test-driven-development` | 自動設定，強制 TDD 分段（RED→GREEN→REFACTOR） |
+| `required_tests` 非空 + 非 test_runner | `null` | checklist/metric/eval_script 場景不需要 TDD |
+| `required_tests` 為空或不存在 | `null` | 舊有行為不變 |
+
+> Phase 1.5c 自動修復時會自動設定 methodology_skill，主 session 不需手動指定。
+
+---
+
 ## 維護機制
 
 - **誰更新**：automl 的維護者（用戶），在安裝新 skill 或 gstack 大版本更新時檢查對照表
