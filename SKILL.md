@@ -239,11 +239,12 @@ python3 ~/.claude/skills/automl/scripts/evaluator_audit.py .automl/{run_id}/stat
 | **regression ≠ 其他層（v5.3+）** | `evaluator_regression` 不可與 structural / semantic / integration 相同 | 複製貼上其他層 = regression 沒有增量驗證 |
 | **regression 非 trivial（v5.3+）** | `evaluator_regression` 不可是 trivial/static（同 semantic 黑名單） | `echo pass` 不是有效的 regression 驗證 |
 
-### Phase 1.5 — 品質關卡（三步）
+### Phase 1.5 — 品質關卡（四步）
 
 ```
 Phase 1.5a: evaluator_audit.py    ← 腳本機械性驗證（type 分類、黑名單、impact_path、integration、regression）
 Phase 1.5b: RED_TEAM agent        ← 紅隊對抗（嘗試 game evaluator，2 輪上限）
+Phase 1.5b': COVERAGE SANITY CHECK ← 覆蓋完整性檢查（主 session 執行，非 subagent）
 Phase 1.5c: 自動修復              ← 紅隊 blocked 時，主 session 修 evaluator → 重跑紅隊（最多 2 輪）
 Phase 2:    baseline inversion    ← 擋沒有鑑別力的 evaluator（自動，baseline subagent）
             ↳ semantic/integration: feature 必須 FAIL（驗「改善」有鑑別力）
@@ -344,6 +345,93 @@ Regression：{evaluator_regression}
 回傳後必須 revert 所有改動：
 - git 模式：git checkout -- {scope}
 - file-backup 模式：從 snapshot 還原
+```
+
+### Phase 1.5b' — Coverage Sanity Check（主 session 執行，不可跳過）
+
+> **解決的問題：** SCD 用 FMEA 驅動（只問「哪裡會壞」），紅隊用 gaming 驅動（只找「怎麼作弊」）。
+> 兩者疊加的結果：required_tests 全是 failure/edge case，happy path 和替代路徑系統性缺席。
+> **解法：** 在紅隊之後、自動修復之前，加一個機械性覆蓋檢查。不需要 subagent，主 session 直接執行。
+
+**觸發條件：** Phase 1.5b 紅隊完成後（無論 BLOCKED 或 PASSED），對每個 feature task 自動跑。
+
+**三個檢查（CHECK 1 無條件，CHECK 2/3 有條件觸發）：**
+
+**CHECK 1: Happy Path Coverage（無條件，每個 task 都檢查）**
+
+> 「required_tests 中是否有至少一個測試，驗證的是『用戶按正常方式使用此功能，從頭到尾成功完成』？」
+
+判定方式：掃描所有 required_tests 的 `behavior` 描述。如果所有 test 的 behavior 都包含負面關鍵詞（failure/error/edge/invalid/boundary/timeout/missing/empty/nil/null/exceed/overflow/stuck/crash/interrupt/cancel/abort/reject/deny/block），且沒有任何一個描述正面完成行為 → 缺少 happy path。
+
+缺少時，自動生成一個 required_test：
+```json
+{
+  "method": "test{功能名}HappyPathCompletesSuccessfully",
+  "level": "integration",
+  "behavior": "（從 task 描述中提取正常使用場景，≥20 字元）",
+  "source": "coverage_sanity_check",
+  "category": "happy_path"
+}
+```
+
+**CHECK 2: Alternative Path Parity（條件觸發：SCD C1 揭示了多條觸發路徑時）**
+
+> 「如果 SCD 揭示了 N 條觸發路徑，required_tests 中是否有覆蓋所有主要路徑的測試？」
+
+判定方式：比對 `state.json` 的 `system_context_dialogue.failure_modes_identified` 中來自 C1 的路徑，與 required_tests 的 behavior 描述。每條主要路徑至少需要一個測試（happy path 或 failure path 都算覆蓋）。
+
+缺少時，為每條未覆蓋的路徑生成 required_test：
+```json
+{
+  "method": "test{路徑名}PathCompletesSuccessfully",
+  "level": "integration",
+  "behavior": "（從該觸發路徑的描述中提取正常使用場景，≥20 字元）",
+  "source": "coverage_sanity_check",
+  "category": "alternative_path"
+}
+```
+
+**CHECK 3: State Sequence Robustness（條件觸發：task 涉及狀態變化時）**
+
+> 「如果 task 涉及狀態變化（state machine / lifecycle / pipeline），required_tests 中是否有測試非線性序列（中斷後重試、重複觸發、快速連續操作）？」
+
+判定方式：如果 task 描述或 scope 中涉及 state machine / lifecycle / pipeline / 狀態轉換，檢查 required_tests 是否有涵蓋 retry/repeat/interrupt/resume/consecutive 行為。
+
+缺少時，生成一個 required_test：
+```json
+{
+  "method": "test{功能名}InterruptThenRetryCompletesSuccessfully",
+  "level": "integration",
+  "behavior": "（用戶在中間狀態中斷後重新觸發，系統正確重置並完成完整流程，≥20 字元）",
+  "source": "coverage_sanity_check",
+  "category": "state_sequence"
+}
+```
+
+**泛用性：** 三個 CHECK 適用於所有 task 類型：
+
+| 領域 | CHECK 1 (Happy Path) | CHECK 2 (Alternative Path) | CHECK 3 (State Sequence) |
+|------|---------------------|---------------------------|--------------------------|
+| 程式碼 | 正常使用完成 | foreground vs background vs widget | idle→active→done 中斷重試 |
+| 文章 | 讀者讀完獲得核心資訊 | SEO vs 社群 vs 電子報 | N/A（文章通常無狀態） |
+| 策略 | 正常市況下策略執行 | 開盤 vs 盤前 vs 突發事件 | 部分成交→重新掛單→完成 |
+| 設定檔 | 預設配置正常運作 | dev vs staging vs production | N/A 或 config reload |
+
+**產出處理：** Coverage Sanity Check 產出的新 required_tests 與紅隊的 findings 一起匯入 Phase 1.5c 的處理流程。
+
+**State file 記錄：**
+```json
+{
+  "coverage_sanity_check": {
+    "completed": true,
+    "happy_path_present": false,
+    "alternative_paths_checked": ["foreground", "background"],
+    "alternative_paths_covered": ["foreground"],
+    "state_sequence_applicable": true,
+    "state_sequence_covered": false,
+    "tests_added": 3
+  }
+}
 ```
 
 ### Phase 1.5c — 紅隊 BLOCKED 自動修復
@@ -1235,7 +1323,8 @@ Verification Checklist：
 - 新增 **Rapid RPN 評分**：對 failure mode 用 Severity × Occurrence × Detection 排序（1-5 scale，max 125）
 - 紅隊回傳格式新增 **`blind_spots`** 陣列：production 會壞但 evaluator 抓不到的場景
 - Phase 1.5c 新增 **blind_spots 處理邏輯**：injectable → required_test / 新 task；risk_scenario → risk_scenarios；manual_only → Phase 3 checklist
-- State file 新增 `system_context_dialogue` 物件（記錄對話結果和 failure modes）
+- 新增 **Phase 1.5b' Coverage Sanity Check**（紅隊之後、自動修復之前）：機械性檢查 required_tests 是否覆蓋 happy path、替代路徑、狀態序列。修復 SCD + 紅隊都是 failure-oriented 導致 happy path 系統性缺席的結構性盲區
+- State file 新增 `system_context_dialogue` 物件 + `coverage_sanity_check` 物件
 - Phase 偵測邏輯變更：即使四者齊全（目標 + evaluator + 範圍 + 技能），仍須跑 System Context Dialogue
 - 紅隊派工模板（v5.5 新增）：`model="opus"`，不可降級
 
