@@ -1,9 +1,9 @@
 ---
 name: automl
-version: 5.5.0
+version: 5.6.0
 description: |
   Autonomous Evaluation Loop — 從對齊意圖到自主執行的完整引擎。
-  四階段：Phase 0 釐清 → Phase 1 拆解定標準 → Phase 2 執行+自我檢驗 loop → Phase 3 交付驗收。
+  四階段：Phase 0 釐清 → Phase 1 拆解定標準（含 System Context Dialogue） → Phase 2 執行+自我檢驗 loop → Phase 3 交付驗收。
   每個 Phase 可串接已安裝的 skill，也可以獨立跑（用戶已經想好目標就直接跳到 Phase 2）。
   觸發詞：/automl、「讓它跑到達標」、「自動優化直到」、「無限循環直到完成」。
 allowed-tools:
@@ -23,6 +23,11 @@ allowed-tools:
 ```
 Phase 0: 釐清意圖（可選）
 Phase 1: 拆解 + 定檢驗標準（可選）
+  Step A: 拆 task（描述 + scope + skill）
+  Step B: System Context Dialogue（強制，不可跳過）
+    → 主 session 問用戶 3-5 個 FMEA 驅動的問題
+    → 用戶回答後更新 task 定義 / evaluator / risk scenarios
+  Step C: 設計 evaluator + risk scenarios
 Phase 2: 雙層循環
   外層 — 全局回歸（regression loop）：
     for each task in task_list:
@@ -67,12 +72,135 @@ Phase 3: 交付驗收
 
 **偵測方式：** 看用戶的訊息是否已包含目標 + evaluator + 範圍 + 強制技能。
 
-- **四者齊全** → 直接進 Phase 2（本檔案已包含所有需要的資訊）
+- **四者齊全** → 仍須跑 System Context Dialogue（Phase 1 Step B），然後進 Phase 2
 - **缺任何一個** → 讀 `references/automl-reference.md` 取得 Phase 0/1 指引，引導用戶補齊；同時讀 `references/skill-mapping.md` 取得技能建議
 - **Phase 2 完成後** → 讀 `references/automl-reference.md` 取得 Phase 3 交付驗收指引
 
 > Phase 0/1/3 的 skill 串接、evaluator 模式詳解、參數說明、使用範例，全在 reference 檔案中。
 > Phase 2 直跑（最常見路徑）不需要讀任何額外檔案。
+> **例外：System Context Dialogue 不可跳過**，即使四者齊全也必須跑。這是 v5.6 的核心改動。
+
+---
+
+## System Context Dialogue（Phase 1 Step B，強制，不可跳過）
+
+> **解決的問題：** Agent 讀 code 就開始定 evaluator，漏掉 code 裡看不出來的觸發路徑、runtime 約束、環境差異。
+> AI agent 最常見的失敗不是「寫不好 code」，而是「沒理解清楚就動手」（Specification Failure）。
+> **解法：** 在定 evaluator 前，強制跟用戶對話釐清系統 context。借鏡 FMEA + RLHF + brainstorming 的模式。
+> **參考：** `company/_shared/lessons/2026-04-01-failure-mode-brainstorm-and-blind-spots.md`
+
+### 觸發時機
+
+Phase 1 Step A（拆 task）完成後，Step C（設計 evaluator）之前。**不可跳過，不可由 agent 自行判斷跳過。**
+
+### 流程
+
+```
+1. Agent 先自己做功課
+   - 讀 code（Explore agent / Grep / Read）
+   - 讀專案文件（AGENTS.md、BUILD.md、lessons/）
+   - 必要時 WebSearch / NotebookLM 研究領域約束
+   
+2. 對每個 Category 評估自信度（0-10）
+   - < 7 → 生成問題問用戶
+   - >= 7 → 列出自己的理解，讓用戶確認或糾正
+   
+3. 問用戶 3-5 個問題（一次問完，不要一個一個問）
+
+4. 用戶回答後，更新：
+   - Task 定義（scope、描述）
+   - Risk scenarios
+   - Evaluator 設計方向
+   - Phase 3 verification checklist（需手動驗證的項目）
+```
+
+### 五個問題 Category（FMEA 驅動，泛用）
+
+主 session 從以下 5 類中挑 3-5 個最相關的問。不是全問 — 自信度高的 category 列出理解讓用戶確認即可。
+
+**C1: Trigger Paths（觸發路徑）**
+> 「這個功能在 production 中，用戶/系統有幾種方式觸發它？我從 code 看到 [X]，還有其他路徑嗎？」
+
+泛用範例：
+- 程式碼：foreground call / background trigger / notification / URL scheme / widget / extension
+- 文章：SEO 搜尋 / 社群分享 / 電子報 / 首頁推薦
+- 策略：開盤 / 盤前 / 盤後 / 突發事件觸發
+- 設定檔：dev / staging / production / CI
+
+**C2: Dependencies & Latency（依賴與延遲）**
+> 「從觸發到完成，中間有什麼可能很慢或可能失敗的步驟？」
+
+泛用範例：
+- 程式碼：網路 API / ML 模型載入 / 檔案 I/O / 資料庫 / 第三方 SDK
+- 文章：引用數據是否過期 / 連結是否有效
+- 策略：市場流動性 / 券商 API 延遲 / 數據源中斷
+
+**C3: Environmental Constraints（環境約束）**
+> 「執行環境有什麼 code 裡看不出來的限制？」
+
+泛用範例：
+- 程式碼：background task timeout / extension memory limit / API rate limit
+- 文章：平台字數限制 / SEO title 長度 / 圖片大小限制
+- 策略：回測 vs live 的 slippage / 最小下單量 / position limit
+
+**C4: History & Workarounds（歷史與 workaround）**
+> 「這個區域之前出過什麼問題？有沒有刻意的 workaround 不能碰？」
+
+避免 agent 重構掉「看起來奇怪但故意這樣寫」的 code。
+
+**C5: Test Environment Gap（測試環境差距）**
+> 「測試環境跟 production 最大的差異是什麼？有什麼是測試環境根本跑不了的？」
+
+泛用範例：
+- 程式碼：模擬器無麥克風 / 無真模型 / 無 background task 限制
+- 策略：回測無 slippage / 無 partial fill
+- 設定檔：CI 無 secrets / 無外部依賴
+
+### 用戶回答的處理
+
+| 回答揭示的內容 | 流入 | 範例 |
+|---|---|---|
+| 新的觸發路徑 | Task scope 擴大或拆新 task | 「還有 background recording path」→ scope 加 `handleRecordingFlag` |
+| 環境約束 | Risk scenario + evaluator（加 DI 讓約束可測）| 「background task 只有 30 秒」→ 加 BackgroundTaskProvider protocol |
+| 測試環境差距 | Phase 3 verification checklist | 「模擬器沒有麥克風」→ checklist 加「需實機驗證錄音」|
+| 歷史 workaround | Scope 排除 | 「那個 workaround 不要碰」→ scope 明確排除 |
+| 用戶回答「沒有其他了」 | 記錄到 state.json 作為 audit trail | `system_context_dialogue: {completed: true, categories_asked: [...]}` |
+
+### Rapid RPN（簡化風險評分）
+
+對用戶回答揭示的每個 failure mode，快速評分：
+
+- **Severity（1-5）**：壞了多嚴重？（1=格式問題，5=資料遺失/crash）
+- **Occurrence（1-5）**：多常觸發？（1=極少，5=每次都會）
+- **Detection（1-5）**：多難被測試抓到？（1=編譯就擋，5=只有 production 才爆）
+
+**RPN = S × O × D**（最高 125）
+- RPN > 40 或 S=5 → 必須加入 evaluator 或 risk scenario
+- RPN 20-40 → 建議加入
+- RPN < 20 → 可接受，記錄但不阻塞
+
+### State File 記錄
+
+System Context Dialogue 的結果記錄在 state.json：
+
+```json
+{
+  "system_context_dialogue": {
+    "completed": true,
+    "categories_asked": ["C1", "C2", "C3", "C5"],
+    "categories_confident": ["C4"],
+    "user_responses_summary": "...",
+    "failure_modes_identified": [
+      {
+        "id": "FM1",
+        "description": "...",
+        "rpn": {"severity": 4, "occurrence": 3, "detection": 5, "total": 60},
+        "action": "added_to_evaluator | added_to_risk_scenario | added_to_checklist"
+      }
+    ]
+  }
+}
+```
 
 ---
 
@@ -133,6 +261,12 @@ Phase 3:    DELIVERABLE_REVIEW    ← 擋品質不足的 deliverable（LLM 判�
 
 **安全閥：** 紅隊最多 2 輪。2 輪都找不到 game 方式 → 視為通過。防止紅隊無限消耗 token。
 
+**派工模板：**
+```
+Agent(prompt=RED_TEAM_PROMPT, description="automl red team task M", mode="auto", model="opus")
+```
+> 紅隊需要創造性思考找 game 向量，必須用 opus。不可降級。
+
 ```
 RED_TEAM_PROMPT：
 
@@ -175,6 +309,9 @@ Regression：{evaluator_regression}
 - 每輪：改 scope 內檔案 → 跑所有 evaluator → 檢查是否全 pass
 - 全 pass 但意圖未達成 = 找到 game 方式 → BLOCKED
 - 無法讓 evaluator pass 而不達成意圖 = evaluator 有效 → PASSED
+- **第二維度（v5.6+）**：gaming 嘗試結束後，無論 BLOCKED 或 PASSED，都必須回答：
+  「即使 Phase 2 subagent 完全照 required_tests 正確實作，在 production 中有什麼場景仍然會失敗，但這些 evaluator 抓不到？」
+  回傳到 blind_spots 陣列。
 
 == 完成後回傳（嚴格遵守此 JSON 格式）==
 \`\`\`json
@@ -192,6 +329,14 @@ Regression：{evaluator_regression}
         "behavior": "這個 test 必須驗證什麼行為（≥20 字元，具體到可以據此寫 test）"
       }
     }
+  ],
+  "blind_spots": [
+    {
+      "id": "B1",
+      "scenario": "描述 production 會壞但 evaluator 抓不到的場景",
+      "why_untestable": "為什麼目前 evaluator 架構無法覆蓋",
+      "mitigation": "injectable（可透過 DI 變成可測）| risk_scenario（加到 Phase 3 checklist）| manual_only（需手動驗證）"
+    }
   ]
 }
 \`\`\`
@@ -203,8 +348,9 @@ Regression：{evaluator_regression}
 
 ### Phase 1.5c — 紅隊 BLOCKED 自動修復
 
-紅隊回傳 `BLOCKED` 時，主 session 執行以下流程：
+紅隊回傳後，主 session 執行以下流程：
 
+**處理 findings（BLOCKED 時）：**
 1. **解析紅隊 JSON**：讀取 `findings` 陣列中每個 finding 的 `required_test`
 2. **累積 required_tests**：把紅隊建議的 test 加入 task 的 `required_tests` 陣列（不刪既有的）
 3. **自動設定 methodology_skill**：如果 `required_tests` 非空且 `evaluator_semantic_type == "test_runner"`，自動把 `methodology_skill` 設為 `"superpowers:test-driven-development"`
@@ -212,6 +358,14 @@ Regression：{evaluator_regression}
 5. **重跑 Phase 1.5a**：evaluator_audit.py（確保修改後仍通過機械性檢查）
 6. **重跑 Phase 1.5b**：紅隊（紅隊 prompt 會帶上已有的 required_tests，讓紅隊嘗試繞過它們）
 7. **最多 2 輪修復**：修復 2 次後紅隊仍 BLOCKED → 停止，報告無法解決，讓用戶介入
+
+**處理 blind_spots（BLOCKED 或 PASSED 都要處理，v5.6+）：**
+1. **解析 `blind_spots` 陣列**
+2. **按 mitigation 分流**：
+   - `injectable` → 主 session 判斷：加為新 required_test（若可在測試環境重現）或拆新 task（若需 DI 重構）
+   - `risk_scenario` → 加入 task 的 `risk_scenarios`，自動流入 Phase 3 verification checklist
+   - `manual_only` → 直接加入 Phase 3 的 `verification_checklist`，標註「需手動驗證」
+3. **更新 state.json**：寫入新增的 risk_scenarios / verification_checklist items
 
 > **設計意圖：** 紅隊找到的 game 向量被轉化成「必須存在且通過的測試」，而非 grep 修補。
 > Phase 2 subagent 拿到 required_tests 後，必須按 TDD 流程寫出這些測試（RED: 先寫 test → 驗 FAIL → GREEN: 寫 implementation → 驗 PASS）。
@@ -1073,3 +1227,23 @@ Verification Checklist：
 - 不自動升級舊 state file
 
 **新的 run：** 一律使用 v5.5 格式（schema_version: "5.5"）
+
+## v5.5 → v5.6 遷移
+
+**v5.6 的變更：**
+- 新增 **System Context Dialogue**（Phase 1 Step B，強制不可跳過）：主 session 問用戶 3-5 個 FMEA 驅動的問題，釐清觸發路徑、依賴、環境約束、歷史 workaround、測試環境差距
+- 新增 **Rapid RPN 評分**：對 failure mode 用 Severity × Occurrence × Detection 排序（1-5 scale，max 125）
+- 紅隊回傳格式新增 **`blind_spots`** 陣列：production 會壞但 evaluator 抓不到的場景
+- Phase 1.5c 新增 **blind_spots 處理邏輯**：injectable → required_test / 新 task；risk_scenario → risk_scenarios；manual_only → Phase 3 checklist
+- State file 新增 `system_context_dialogue` 物件（記錄對話結果和 failure modes）
+- Phase 偵測邏輯變更：即使四者齊全（目標 + evaluator + 範圍 + 技能），仍須跑 System Context Dialogue
+- 紅隊派工模板（v5.5 新增）：`model="opus"`，不可降級
+
+**未完成的 v5.5 run（state.json 沒有 `system_context_dialogue` 欄位）：**
+- 以 v5.5 模式繼續（無 System Context Dialogue，紅隊無 blind_spots）
+- 不自動升級舊 state file
+
+**新的 run：** 一律使用 v5.6 格式（schema_version: "5.6"）
+
+**設計依據：** `company/_shared/lessons/2026-04-01-failure-mode-brainstorm-and-blind-spots.md`
+**NLM Research Notebook：** `37832347-8f5f-489f-a5bc-03146acf2cca`
