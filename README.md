@@ -188,6 +188,11 @@ automl's mandatory skill system works best with these skill ecosystems. automl i
 - Phase 3: `engineering:code-review`, `design:design-critique`
 - Also includes `swift-concurrency`, `swiftui-expert-skill`
 
+**[notebooklm-py](https://github.com/teng-lin/notebooklm-py)** — Recommended for v5.7+ Environment Gap Research Gate. When SCD C5 (Test Environment Gap) confidence is low, automl uses NotebookLM deep research to validate assumptions about production behavior before designing evaluators. 300+ web sources + multi-round Q&A produces significantly better evaluators than guessing. Falls back to WebSearch if not installed.
+- Install: `pip install notebooklm-py && notebooklm skill install`
+- Phase 1 Step B': `notebooklm source add-research` + `notebooklm ask` (multi-round)
+- Phase 2 Emergency Gate: same workflow when subagent is stuck on production-only behavior
+
 **Without any of these installed**, automl still works — subagents use their built-in knowledge. But with the recommended skills, hit rates improve significantly and Phase 3 reviews catch more issues.
 
 ## License
@@ -385,6 +390,11 @@ automl 的強制技能機制搭配這些 skill 生態系效果最好。automl �
 - Phase 2：`engineering:architecture`（重構）、`design:design-critique`
 - Phase 3：`engineering:code-review`、`design:design-critique`
 - 也包含 `swift-concurrency`、`swiftui-expert-skill`
+
+**[notebooklm-py](https://github.com/teng-lin/notebooklm-py)** — v5.7+ Environment Gap Research Gate 推薦。當 SCD C5（測試環境差距）信心不足時，automl 用 NotebookLM deep research 驗證 production 環境假設再設計 evaluator。300+ 網路來源 + 多輪問答，效果遠優於猜測。未安裝時 fallback 到 WebSearch。
+- 安裝：`pip install notebooklm-py && notebooklm skill install`
+- Phase 1 Step B'：`notebooklm source add-research` + `notebooklm ask`（多輪）
+- Phase 2 Emergency Gate：subagent 卡在 production-only 行為時同樣觸發
 
 **以上都沒裝也能用** — subagent 會用自身的內建知識。但搭配推薦 skill，命中率顯著提升，Phase 3 review 也能抓到更多問題。
 

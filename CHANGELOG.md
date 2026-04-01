@@ -1,5 +1,24 @@
 # Changelog
 
+## v5.7.0 — 2026-04-01
+
+Environment Gap Research Gate — research production constraints before designing evaluators.
+
+### Features
+
+- **Environment Gap Research Gate (Phase 1 Step B')**: When SCD C5 (Test Environment Gap) confidence < 7, automl forces a research step before evaluator design. Uses NotebookLM deep research (300+ sources + multi-round Q&A) to validate assumptions about production behavior. Research findings flow into evaluators, risk scenarios, required_tests, and verification checklist.
+- **Phase 2 Emergency Research Gate**: When a subagent reports `stuck` and the main session cannot diagnose the cause from code alone, automl pauses the loop and triggers research before continuing.
+- **NLM Pre-Create Routing**: Research Gate respects the `/notebooklm` skill's notebook registry — checks for existing relevant notebooks before creating new ones, preventing duplication.
+- **Three-level tool detection**: `which notebooklm || pip show notebooklm-py || mdfind -name notebooklm`. NLM available → forced. NLM fails 3x (30s/60s/120s backoff) → fallback WebSearch. NLM not installed → fallback WebSearch directly.
+- **Audit enforcement**: evaluator_audit.py checks `environment_research_gate.completed` when C5 confidence < 7, and `findings_count > 0` with empty `applied_to` → BLOCKED.
+
+### Migration
+
+- v5.6 runs without `environment_research_gate`: continue in v5.6 mode (no Research Gate)
+- New runs: v5.7 format (`schema_version: "5.7"`)
+
+---
+
 ## v5.6.0 — 2026-04-01
 
 System Context Dialogue, red team blind spots, and Coverage Sanity Check.

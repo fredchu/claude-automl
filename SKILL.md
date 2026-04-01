@@ -27,6 +27,9 @@ Phase 1: 拆解 + 定檢驗標準（可選）
   Step B: System Context Dialogue（強制，不可跳過）
     → 主 session 問用戶 3-5 個 FMEA 驅動的問題
     → 用戶回答後更新 task 定義 / evaluator / risk scenarios
+  Step B': Environment Gap Research Gate（C5 confidence < 7 時觸發）
+    → NLM deep research 或 WebSearch fallback 驗證 production 環境規則
+    → 研究結論流入 evaluator / risk scenarios / required_tests / verification checklist
   Step C: 設計 evaluator + risk scenarios
 Phase 2: 雙層循環
   外層 — 全局回歸（regression loop）：
@@ -201,6 +204,105 @@ System Context Dialogue 的結果記錄在 state.json：
   }
 }
 ```
+
+---
+
+## Environment Gap Research Gate（Phase 1 Step B'，條件觸發）
+
+> **解決的問題：** Agent 從 code 推不出 production 環境的隱藏規則（iOS background 限制、交易 slippage、ML data drift、cloud cold start…）。
+> 猜測式 debug 浪費大量時間 — MumbleKey 背景錄音花了 6 輪猜測失敗，NLM 研究一次搞定 6 個根因。
+> **解法：** SCD C5 信心不足時，強制研究 production 環境規則再設計 evaluator。
+
+### 觸發條件
+
+**Phase 1 SCD 後：** C5（Test Environment Gap）confidence < 7 → 強制觸發。
+- C5 confidence < 7 = agent 承認「我不確定測試環境跟 production 差多少」
+- 不靠關鍵詞，靠 agent 自己的信心評估（SCD 既有機制）
+- 泛用於所有領域：iOS 模擬器 vs 實機、回測 vs 實盤、local vs cloud、訓練集 vs 線上推論
+
+**Phase 2 Emergency Gate：** subagent 回報 `stuck` + 主 session 無法從 code 判斷原因 → 暫停 loop，觸發研究。
+- 不靠關鍵詞，靠「stuck 且無法診斷」這個結構性條件
+- 研究完後更新 evaluator / risk_scenarios / required_tests，再恢復 loop
+
+### 工具選擇（三重偵測 + 強制 NLM）
+
+```
+1. 偵測 NLM CLI：
+   which notebooklm || pip show notebooklm-py || mdfind -name notebooklm
+   ├─ 找到 → notebooklm status 確認 auth
+   │   ├─ auth OK → 強制 NLM deep research（不可選擇 WebSearch）
+   │   └─ auth fail → 提示用戶 `notebooklm login`，等修復後繼續
+   └─ 三重偵測都沒有 → fallback WebSearch 3-5 輪
+
+2. NLM 執行中失敗處理（不輕易放棄）：
+   失敗 → 等 30s 重試
+   → 失敗 → 等 60s 重試
+   → 失敗 → 等 120s 重試
+   → 三次都失敗 → fallback WebSearch 3-5 輪
+```
+
+### 研究流程（NLM 路徑 — 強制優先）
+
+NLM CLI 可用時，走此路徑（不可選擇 WebSearch）：
+
+```
+1. **Pre-Create Routing**（遵守 /notebooklm skill 的 Pre-Create Routing 規則）：
+   讀 `記憶庫/語義記憶/nlm-notebook-registry.md`，用研究主題關鍵詞比對 tags。
+   - 找到相關 notebook → `notebooklm ask "問題" --notebook <id>` 試問
+     - 回答充分 → 直接用，跳到步驟 4
+     - 來源不足但主題對 → `source add-research` 補來源到該 notebook，跳到步驟 3
+   - 找不到 → `notebooklm create "Research: {gap 描述}" --json`，建完後更新 registry
+2. notebooklm source add-research "{具體問題}" --mode deep --no-wait
+   （可跑 2-3 個 research query 涵蓋不同面向）
+3. notebooklm research wait --import-all --timeout 600
+4. 主 session 問 3-5 個具體問題驗證假設（多輪 notebooklm ask）
+5. 整理結論，流入：
+   - evaluator 設計（哪些東西不能靠 unit test 驗）
+   - risk_scenarios（production 環境的隱藏規則）
+   - required_tests（測試需要模擬什麼條件）
+   - verification_checklist（必須在 production 環境驗的項目）
+```
+
+NLM CLI 不可用時的降級行為：
+- registry 檔案存在 → 讀 registry 找既有 notebook ID，提示用戶：
+  「找到相關 NLM notebook {ID}，但 notebooklm CLI 不可用。可在瀏覽器手動查詢，或跳過走 WebSearch。」
+- registry 不存在 → 直接走 WebSearch fallback
+
+### WebSearch Fallback 流程
+
+NLM 不可用時，用 WebSearch 做 3-5 輪搜尋：
+1. 搜尋 "{平台} {行為} best practice"
+2. 搜尋 "{具體錯誤訊息}"
+3. 搜尋 "{框架} background/production constraints"
+4. 主 session 自行整合搜尋結果，產出同樣的結論結構
+5. 品質不如 NLM 但優於猜測
+
+### State File 記錄
+
+```json
+{
+  "environment_research_gate": {
+    "triggered_by": "scd_c5_low_confidence | phase2_stuck_undiagnosable",
+    "c5_confidence": 4,
+    "tool_used": "nlm | websearch",
+    "nlm_notebook_id": "48e7dd42-...",
+    "completed": true,
+    "findings_count": 6,
+    "applied_to": ["task_1_evaluator", "task_1_risk_scenarios", "task_2_required_tests"],
+    "research_queries": ["query 1", "query 2"],
+    "key_findings_summary": "..."
+  }
+}
+```
+
+### 審計（evaluator_audit.py 新增檢查）
+
+| 檢查 | 規則 | 為什麼 |
+|------|------|--------|
+| **research gate 完整性** | C5 confidence < 7 + `environment_research_gate.completed != true` → BLOCKED | 知道有 gap 但沒研究 = 盲目設計 evaluator |
+| **研究結論被採用** | `findings_count > 0` + `applied_to` 為空 → BLOCKED | 研究了但沒用 = 白研究 |
+
+Phase 2 Emergency Gate 不做硬性 audit（stuck 可能有其他原因），但 changelog 標記 warning：`STUCK_WITHOUT_RESEARCH: subagent stuck, main session did not trigger research gate`。
 
 ---
 
@@ -1336,3 +1438,21 @@ Verification Checklist：
 
 **設計依據：** `company/_shared/lessons/2026-04-01-failure-mode-brainstorm-and-blind-spots.md`
 **NLM Research Notebook：** `37832347-8f5f-489f-a5bc-03146acf2cca`
+
+## v5.6 → v5.7 遷移
+
+**v5.7 的變更：**
+- 新增 **Environment Gap Research Gate**（Phase 1 Step B'，條件觸發）：SCD C5 confidence < 7 時，強制用 NLM deep research（或 WebSearch fallback）研究 production 環境規則，結論流入 evaluator / risk_scenarios / required_tests / verification_checklist
+- 新增 **Phase 2 Emergency Research Gate**：subagent 回報 `stuck` 且主 session 無法從 code 診斷原因時，暫停 loop 觸發研究
+- 工具偵測：三重偵測 NLM CLI（`which` + `pip show` + `mdfind`），有就強制使用，3 次失敗（遞增間隔 30s/60s/120s）才 fallback WebSearch
+- State file 新增 `environment_research_gate` 物件
+- evaluator_audit.py 新增 2 項檢查：research gate 完整性 + 研究結論被採用
+
+**未完成的 v5.6 run（state.json 沒有 `environment_research_gate` 欄位）：**
+- 以 v5.6 模式繼續（無 Research Gate）
+- 不自動升級舊 state file
+
+**新的 run：** 一律使用 v5.7 格式（schema_version: "5.7"）
+
+**設計依據：** `company/mumblekey/lessons/2026-04-01-ios-background-audio-session-rules.md`
+**NLM Research Notebook：** `48e7dd42-2fbf-49bf-aa6d-3ad8851e5b58`
