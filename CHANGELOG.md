@@ -1,5 +1,61 @@
 # Changelog
 
+## v5.6.0 — 2026-04-01
+
+System Context Dialogue, red team blind spots, and Coverage Sanity Check.
+
+### Breaking changes from v5.5
+
+- Phase 1 Step B (System Context Dialogue) is now mandatory — even if task has all four elements (goal + evaluator + scope + skill), SCD must run before evaluator design
+- Red team return format adds `blind_spots` array (production failure scenarios evaluators can't catch)
+- State file adds `system_context_dialogue` and `coverage_sanity_check` objects
+- `schema_version` in state file: `"5.6"`
+
+### Features
+
+- **System Context Dialogue (Phase 1 Step B)**: FMEA-driven conversation with user before evaluator design. Five categories: Trigger Paths, Dependencies & Latency, Environmental Constraints, History & Workarounds, Test Environment Gap. Agent self-assesses confidence (0-10) per category, asks 3-5 questions for low-confidence areas. User responses flow into task scope, risk scenarios, and Phase 3 verification checklist.
+- **Rapid RPN scoring**: Severity × Occurrence × Detection (1-5 scale, max 125) for each failure mode. RPN > 40 or S=5 → must add to evaluator or risk scenario.
+- **Red team blind spots (v5.6+)**: after gaming attempts, red team must answer "what production scenarios would fail but these evaluators can't catch?" Results flow to `injectable` (new required_test or task), `risk_scenario` (Phase 3 checklist), or `manual_only` (verification checklist).
+- **Phase 1.5b' — Coverage Sanity Check**: mechanical check after red team, before auto-fix. Fixes structural blind spot where SCD (failure-focused) + red team (gaming-focused) both miss happy paths. Three checks:
+  - CHECK 1: Happy Path Coverage (unconditional) — at least one test verifying normal successful completion
+  - CHECK 2: Alternative Path Parity (when SCD C1 reveals multiple trigger paths) — each path has at least one test
+  - CHECK 3: State Sequence Robustness (when task involves state machine) — interrupt-then-retry test
+- **Cross-domain applicability**: all SCD categories and Coverage Sanity Checks include examples for code, articles, trading strategies, and config files.
+
+### Migration
+
+- v5.5 runs without `system_context_dialogue`: continue in v5.5 mode (no SCD, no blind_spots)
+- New runs: v5.6 format (`schema_version: "5.6"`)
+
+---
+
+## v5.5.0 — 2026-03-31
+
+Required tests from red team + methodology skill separation + TDD staging.
+
+### Breaking changes from v5.4
+
+- New field: `required_tests` (task-level array) — red team findings converted to structured test requirements
+- New field: `methodology_skill` (task-level) — separated from domain `skill` (e.g., TDD as methodology + /investigate as domain)
+- Red team return format: `fix_suggestion` → `required_test` (structured with method/level/behavior)
+- Phase 1.5c: from "fix evaluator grep" to "extract required_tests" — red team gaps become mandatory tests, not grep patches
+- `schema_version` in state file: `"5.5"`
+
+### Features
+
+- **required_tests**: red team findings are converted into structured test requirements (method name, level, behavior description ≥20 chars). Phase 2 subagent must write and pass all required_tests.
+- **methodology_skill**: separated from domain skill. Methodology (e.g., `superpowers:test-driven-development`) establishes the working rhythm; domain skill (e.g., `/investigate`) provides domain knowledge. Both loaded at dispatch start.
+- **TDD staging with required_tests**: when methodology is TDD + required_tests exist, enforced RED→GREEN→REFACTOR cycle. RED: write all required_tests, verify FAIL. GREEN: minimal implementation, verify PASS. REFACTOR: clean up, keep PASS.
+- **required_tests level override**: `level` field (unit/integration/e2e) overrides methodology skill defaults. Integration = no mocking between modules under test. E2E = no mocks at all.
+- **Dual skill loading in TASK_LOOP_PROMPT**: methodology skill first (establish rhythm), then domain skill (provide knowledge). Subagent only allowed to call these two skills.
+
+### Migration
+
+- v5.4 runs without `required_tests`: continue in v5.4 mode (no required_tests, red team uses fix_suggestion)
+- New runs: v5.5 format (`schema_version: "5.5"`)
+
+---
+
 ## v5.4.0 — 2026-03-31
 
 Red team agent replaces falsification + manual quality gates.
