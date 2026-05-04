@@ -1,6 +1,6 @@
 ---
 name: automl
-version: 5.8.0
+version: 5.8.1
 description: |
   Autonomous Evaluation Loop — 從對齊意圖到自主執行的完整引擎。
   四階段：Phase 0 釐清 → Phase 1 拆解定標準（含 System Context Dialogue） → Phase 2 執行+自我檢驗 loop → Phase 3 交付驗收。
@@ -611,6 +611,40 @@ Each tick start, in this exact order:
 
 6. Run normal Phase 2/3 work
 ```
+
+### Tick Gate Output Discipline（hard rule，v5.8.1+）
+
+> **解決的問題：** v5.8 β-4 dogfood 第一次跑 (run 20260504-145928-a231) 撞到 5h quota 75% gate 時，主 session 沒按 spec FIXED ORDER 直接 transition + ScheduleWakeup，反而**多嘴問用戶選 (A) 嚴格 / (B) pragmatic / (C) 暫停**，違反 autonomous discipline。
+> **根因：** SKILL §Autonomous Mode 之前定義了 mechanical 行為（state + wake）但沒寫「不可寫選項給用戶」紅線；模型 fill-in-the-blank 自然語言時偏向禮貌徵詢。
+
+tick gate 觸發 paused / terminal / quota_wait / budgetLimited 任一條件時，主 session 輸出**禁止偏離以下 template**：
+
+```
+Run {run_id} → {lifecycle_state}. {trigger_summary}. ScheduleWakeup +{N}s.
+```
+
+**禁止：**
+- ❌ 寫「(A) … (B) … 你要選哪個？」
+- ❌ 寫「要不要繼續？」「先暫停嗎？」「需要 override 嗎？」
+- ❌ 評估 gate 是否「適合此情境」(eg. codex tasks 不吃 Claude quota → bypass) — 75% 是 hard threshold，無例外
+- ❌ 寫超過 3 句話
+
+用戶若要介入：用 `/automl pause / resume / clear / status` — 不是讓主 session 代問。
+
+### Anti-pattern 教學
+
+```
+❌ 「5h quota 79%。給你選 (A) 嚴格 (B) pragmatic (C) 暫停。」
+✅ 「Run 20260504-145928-a231 → quota_wait. 5h 79% > 75%. ScheduleWakeup +3600s.」
+
+❌ 「T2 完成。要繼續 T3 嗎？」
+✅ 「T2 PASSED. dispatching T3.」
+
+❌ 「我推薦 (A) 但你決定。」
+✅ (don't write this — autonomous decides)
+```
+
+**設計依據：** `company/_shared/lessons/2026-05-04-automl-tick-gate-output-discipline.md`
 
 ### Post-tick re-check (after subagent returns)
 
