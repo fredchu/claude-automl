@@ -1,6 +1,6 @@
 ---
 name: automl
-version: 5.7.0
+version: 5.8.0
 description: |
   Autonomous Evaluation Loop — 從對齊意圖到自主執行的完整引擎。
   四階段：Phase 0 釐清 → Phase 1 拆解定標準（含 System Context Dialogue） → Phase 2 執行+自我檢驗 loop → Phase 3 交付驗收。
@@ -563,7 +563,7 @@ Regression：{evaluator_regression}
 
 ---
 
-## Autonomous Mode (v5.7, opt-in)
+## Autonomous Mode (v5.8, opt-in)
 
 `/automl --autonomous` starts a run that self-wakes via ScheduleWakeup until
 it reaches a terminal state (`complete` / `failed` / `budgetLimited` /
@@ -669,7 +669,7 @@ If `quota_check.py` raises (network down, token expired):
    Discord push "Anthropic OAuth quota check broken — please verify token /
    network", exit
 
-## Lifecycle Commands (v5.7)
+## Lifecycle Commands (v5.8)
 
 These commands operate on `.automl/{run_id}/state.json` only — they do not
 trigger main loop logic directly. Each is a thin wrapper.
@@ -787,15 +787,15 @@ Phase 2 期間，主 session 只做四件事：
 
 ### 主 session 決策樹（每個 loop tick 的邏輯）
 
-**v5.7 autonomous mode addition:** When `state.autonomous == true`, the
-following short-circuits run BEFORE the legacy v5.6 decision tree (see
+**v5.8 autonomous mode addition:** When `state.autonomous == true`, the
+following short-circuits run BEFORE the legacy pre-v5.8 decision tree (see
 "Autonomous Mode" chapter for the FIXED tick gate sequence: paused →
 terminal → quota → budget → ticks_used++).
 
 When `state.autonomous == false` (default), behavior is identical to v5.6.
 
 After the legacy decision tree completes (and a tick was actually performed),
-v5.7 autonomous mode also runs the post-tick re-check + ScheduleWakeup logic
+v5.8 autonomous mode also runs the post-tick re-check + ScheduleWakeup logic
 described in the autonomous chapter.
 
 ```
@@ -1105,16 +1105,17 @@ Phase 2 開始時，掃描 `.automl/` 目錄：
 }
 ```
 
-## v5.6 → v5.7 Schema Migration (Strict Additive)
+## v5.7 → v5.8 Schema Migration (Strict Additive)
 
-v5.7 adds autonomous mode fields. Strictly additive — v5.6 in-flight runs
-are read with default-fill (`autonomous=false`), continue to run as v5.6.
-No migration code required; defaults are populated by `state_io.load()`.
+v5.8 adds autonomous mode fields. Strictly additive — pre-v5.8 in-flight runs
+(v5.6 / v5.7) are read with default-fill (`autonomous=false`), continue to
+run as before. No migration code required; defaults are populated by
+`state_io.load()`.
 
 ```json
 {
-  "schema_version": "5.7",
-  // ... all v5.6 fields preserved ...
+  "schema_version": "5.8",
+  // ... all pre-v5.8 fields preserved ...
 
   "autonomous": false,
   "lifecycle_state": "active",
@@ -1708,3 +1709,25 @@ Verification Checklist：
 
 **設計依據：** `company/mumblekey/lessons/2026-04-01-ios-background-audio-session-rules.md`
 **NLM Research Notebook：** `48e7dd42-2fbf-49bf-aa6d-3ad8851e5b58`
+
+## v5.7 → v5.8 遷移
+
+**v5.8 的變更（Autonomous Mode opt-in）：**
+- 新增 `/automl --autonomous` flag — 啟動的 run 會經由 ScheduleWakeup 自我推進到終端狀態
+- 新增 **Hybrid Dual-Quota Gate**：Claude OAuth pre-check（任一 non-null bucket >= 75%）+ Codex wrapper post-hoc（既有 `--quota-gate 85` reuse + stderr 解析）
+- 新增 **Lifecycle Commands**：`/automl pause` / `resume` / `clear` / `status`（soft pause、idempotency-keyed Discord push）
+- 新增 **Global Budget Cap**：`max_total_ticks=50` + `max_wall_minutes=480` 預設、`--extend-budget +N` 可追加
+- State file 新增 `autonomous` / `lifecycle_state` / `paused` / `next_wake_at` / `target_resume_at` / `last_tick_at` / `state_version` / `quota_state` / `quota_history` / `budget` / `discord_push_log` 欄位
+- 5 個新 helper scripts（純 Python）：`scripts/quota_check.py` / `scripts/discord_push.py` / `scripts/state_io.py` / `scripts/lifecycle.py` / `scripts/run_lock.py`
+
+**未完成的 v5.6 / v5.7 run（state.json 沒有 `autonomous` 欄位）：**
+- 以原有版本模式繼續（無 autonomous wake / 無 quota gate）
+- `state_io.load()` 讀 v5.6/v5.7 state 自動填 v5.8 defaults（autonomous=false），不破壞既有行為
+- 不自動升級 schema_version
+
+**新的 run：** 一律使用 v5.8 格式（schema_version: "5.8"）
+
+**Tier 2/3 邊界**：multi-run 真平行 / external watchdog daemon / mid-run autonomous enable / `--simple` 跳 SCD — 全 OUT of scope（Tier 3 範圍）
+
+**設計依據：** `docs/superpowers/specs/2026-05-04-automl-autonomous-mode-design.md`
+**Implementation plan：** `docs/superpowers/plans/2026-05-04-automl-autonomous-mode-implementation.md`
