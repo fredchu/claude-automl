@@ -669,6 +669,91 @@ If `quota_check.py` raises (network down, token expired):
    Discord push "Anthropic OAuth quota check broken — please verify token /
    network", exit
 
+## Lifecycle Commands (v5.7)
+
+These commands operate on `.automl/{run_id}/state.json` only — they do not
+trigger main loop logic directly. Each is a thin wrapper.
+
+### `/automl pause [run_id]`
+
+**Behavior:** Sets `paused=true`, `lifecycle_state="paused"`. Does NOT
+interrupt currently-running tick (soft pause per spec Q6:b). Returns
+immediately with "pending — pause takes effect after current tick (up to
+5-10 minutes)" message (Q6:i).
+
+**run_id resolution:** If omitted, uses the active autonomous run from
+`run_lock.find_active_autonomous()`. If no active autonomous → refuse, list
+all `.automl/*` runs with their states.
+
+**Implementation:**
+
+```bash
+python3 -c "
+from pathlib import Path
+import sys
+sys.path.insert(0, '/Users/fredchu/.claude/skills/automl/scripts')
+import run_lock, state_io, lifecycle
+
+automl_dir = Path('/path/to/repo/.automl')
+run_id = sys.argv[1] if len(sys.argv) > 1 else run_lock.find_active_autonomous(automl_dir)
+
+if not run_id:
+    print('No active autonomous run. Specify run_id explicitly.')
+    sys.exit(1)
+
+state_path = automl_dir / run_id / 'state.json'
+
+def updater(state):
+    if not lifecycle.transition_valid(state['lifecycle_state'], 'paused'):
+        raise ValueError(f'Cannot pause from {state[\"lifecycle_state\"]}')
+    state['paused'] = True
+    state['lifecycle_state'] = 'paused'
+
+state_io.cas_write_with_retry(state_path, updater)
+print(f'Pause pending for {run_id}. Effective after current tick (up to 5-10 min).')
+"
+```
+
+### `/automl resume [run_id] [--extend-budget +N]`
+
+**Behavior:**
+1. Re-check single-run lock (Codex review I2 fix)
+2. Set `paused=false`
+3. **Set `lifecycle_state="active"`** (Codex review C1 critical fix — without
+   this, wake handler sees paused state and exits)
+4. If `--extend-budget +N`: `budget.max_total_ticks += N`
+5. Re-run quota pre-check; if triggered → set lifecycle_state="quota_wait"
+   instead of active, schedule wake at target_resume_at
+6. Else: ScheduleWakeup(90, "<<autonomous-loop-dynamic>>")
+
+### `/automl clear [run_id] [--rm]`
+
+**Behavior:** Sets `lifecycle_state="cleared"`. Does NOT schedule wake.
+Leaves `.automl/{run_id}/` on disk for forensics. With `--rm`, deletes
+the entire run directory.
+
+### `/automl status [run_id]`
+
+**No args:** List all `.automl/*/state.json` with run_id, lifecycle_state,
+phase, last_tick_at, next_wake_at. Include both autonomous and v5.6 runs.
+
+**With run_id:** Print full state.json + last 5 changelog entries.
+
+For v5.6 runs (autonomous=false), display lifecycle_state as `(n/a — non-autonomous)`.
+
+### Discord push triggers
+
+Push to webhook URL (loaded from `~/.config/automl/discord_webhook.url`) when:
+
+1. **Terminal state entry** (complete / failed / budgetLimited):
+   `idempotency_key = {run_id}:{lifecycle_state}:{first_entry_iso8601}`
+
+2. **First quota_wait entry** (CEO review fix — user wants to know "I'm sleeping"):
+   Subsequent quota_wait entries in same run do NOT push (avoid noise).
+
+Push failures (HTTP 5xx, timeout) are silently logged to `state.discord_push_log`
+and do NOT block lifecycle transitions (Eng review fix).
+
 ## Phase 2 — 執行 + 自我檢驗 Loop
 
 > 這是 automl 的核心引擎。
