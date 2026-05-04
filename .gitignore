@@ -1,0 +1,7 @@
+
+# Build artifacts (suppress codex-dispatch policy violation noise)
+__pycache__/
+*.pyc
+.pytest_cache/
+.DS_Store
+.codex-dispatch/
