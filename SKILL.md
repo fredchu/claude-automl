@@ -787,6 +787,17 @@ Phase 2 期間，主 session 只做四件事：
 
 ### 主 session 決策樹（每個 loop tick 的邏輯）
 
+**v5.7 autonomous mode addition:** When `state.autonomous == true`, the
+following short-circuits run BEFORE the legacy v5.6 decision tree (see
+"Autonomous Mode" chapter for the FIXED tick gate sequence: paused →
+terminal → quota → budget → ticks_used++).
+
+When `state.autonomous == false` (default), behavior is identical to v5.6.
+
+After the legacy decision tree completes (and a tick was actually performed),
+v5.7 autonomous mode also runs the post-tick re-check + ScheduleWakeup logic
+described in the autonomous chapter.
+
 ```
 讀 state.json
 ├── phase == "done" → 已完成，報告結果
