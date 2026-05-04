@@ -1,6 +1,6 @@
 ---
 name: automl
-version: 5.8.1
+version: 5.9.0
 description: |
   Autonomous Evaluation Loop — 從對齊意圖到自主執行的完整引擎。
   四階段：Phase 0 釐清 → Phase 1 拆解定標準（含 System Context Dialogue） → Phase 2 執行+自我檢驗 loop → Phase 3 交付驗收。
@@ -818,6 +818,83 @@ Phase 2 期間，主 session 只做四件事：
 - 讓 subagent 自主執行 Bash、Edit、git 操作，不跳權限確認
 - 否則每步都要用戶按確認，違反「不主動問用戶」原則
 ```
+
+### Dispatch Routing Matrix (v5.9, hard rule)
+
+> **解決的問題（β-4 dogfood 漂移）：** 主 session 每次 dispatch task_loop 自由心證選 executor，已多次失誤（T1+T3+T4 fix 應 codex 派 sonnet；Phase 3 retry 2 重蹈）。
+> **解法：** 寫死決策表，每次 dispatch 前主 session 必須 (a) 逐條過 reflex checklist (b) 在 `state.task[N].dispatch_rationale` 寫命中第幾條。違反 = 主 session 違反 v3 「主 session 是調度器」原則。
+
+#### Phase × Step 全表
+
+| Phase / Step | Executor | 固定 or 可變 |
+|---|---|---|
+| Phase 1.5b RED_TEAM | claude:opus | **固定（不可降級）** |
+| Phase 1.5b' Coverage Sanity | 主 session 直接執行 | 固定 |
+| Phase 2 baseline | claude:haiku | 固定 |
+| **Phase 2 task_loop** | 見下方 routing matrix | **可變（核心）** |
+| Phase 2 regression check | claude:haiku | 固定 |
+| Phase 3 Step 1 FINAL_VERIFICATION | claude:haiku | 固定 |
+| Phase 3 Step 2 RISK_REVIEW | claude:opus | **固定（不可降級）** |
+| Phase 3 Step 3 DELIVERABLE_REVIEW | codex:reviewer → claude:sonnet (fallback) | 半固定 |
+| **Phase 3 任一 step BLOCKED 後 retry fix** | 見下方 routing matrix（**重新評，不沿用首輪**） | **可變（核心）** |
+
+#### Routing matrix（從上往下評，第一條命中即決定）
+
+| # | Task 屬性 | Executor | 派工指令 |
+|---|---|---|---|
+| 1 | 多 system 串接（≥ 2 service / repo / process boundary） | claude:sonnet | `Agent(model="sonnet", ...)` |
+| 2 | 跨多檔（≥ 3 file）+ 架構決策（namespace / cache key / callback wire / module boundary） | claude:sonnet | `Agent(model="sonnet", ...)` |
+| 3 | 探索性（root cause 未明 / 修法未定） | claude:sonnet 或主 session 互動 debug | `Agent(model="sonnet", ...)` 或暫停派工 |
+| 4 | 主觀命名 / UI / abstraction 層級判斷 | claude:sonnet | `Agent(model="sonnet", ...)` |
+| 5 | 單檔 + spec 完整（required_tests ≥ 5 + impact_path 完整）+ deterministic | **codex:dispatch:worker** | `python3 ~/.claude/skills/codex-dispatch/scripts/codex_dispatch_role.py --task <task.md>` |
+| 6 | 範圍明確 bug fix（已知 file + root cause + fix direction） | **codex:dispatch:worker** | 同上 |
+| 7 | 局部重構（rename / 抽函式 / callback→async） | **codex:dispatch:worker** | 同上 |
+| 8 | 為單一函式補 unit test | **codex:dispatch:worker** | 同上 |
+| 9 | 已寫好 plan 的 mechanical 實作（plan 在 spec / design / phase3 retry_log） | **codex:dispatch:worker** | 同上 |
+| 10 | 都沒命中 | claude:sonnet（fallback） | `Agent(model="sonnet", ...)` |
+
+#### Reflex checklist（主 session 每次派 task_loop / Phase 3 retry fix 前必填）
+
+派工前必須口頭過一遍並寫進 `state.task[N].dispatch_rationale`：
+
+```
+- Q1 檔案數：N 個 → {≤2 / ≥3}
+- Q2 邊界：{單 process / cross-system}
+- Q3 Spec：{required_tests N / impact_path 完整 / fix_direction 寫死了}
+- Q4 Root cause 確定：{是 / 否}
+- Q5 需 LLM 取捨：{無 / 命名 / abstraction / cache key namespace ...}
+- Q6 命中 matrix 第 N 條 → executor = {codex / sonnet}
+```
+
+`dispatch_rationale` 必填且必須引用 matrix 條號。沒寫條號 = 違反 hard rule。
+
+#### Phase 3 retry fix 特別規則
+
+Phase 3 任一 step BLOCKED 後回 Phase 2 fix 時：
+- **不可沿用首輪 task_loop executor** — 重新走 reflex checklist 評屬性
+- 通常 retry fix 任務屬性比首輪更 deterministic（review 已寫死 fix） → 多數命中 codex
+- 但若 fix 牽涉 cross-module 設計重做（如 cache namespace 重切） → 仍 sonnet
+
+#### Anti-pattern（看到立刻收手）
+
+- ❌「保險起見派 sonnet」 — 沒按 matrix 評就漂移
+- ❌「上次 sonnet 跑得好就再派 sonnet」 — 每次重新評
+- ❌「Phase 3 retry = 複雜 = 派 sonnet」 — 多數 retry 比首輪更 deterministic
+- ❌「沒寫 dispatch_rationale」 — hard rule violation
+
+#### State file schema 擴充
+
+```json
+{
+  "task_list": [{
+    "id": 1,
+    "dispatch_executor": "codex-dispatch:worker | claude:sonnet:task_loop | claude:sonnet:phase3_retry",
+    "dispatch_rationale": "單檔 + 7 required_tests + deterministic — 命中 matrix 條 #5 + #9"
+  }]
+}
+```
+
+**設計依據：** `company/_shared/lessons/2026-05-04-automl-dispatch-routing-matrix.md`
 
 ### 主 session 決策樹（每個 loop tick 的邏輯）
 
