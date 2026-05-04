@@ -563,6 +563,112 @@ Regression：{evaluator_regression}
 
 ---
 
+## Autonomous Mode (v5.7, opt-in)
+
+`/automl --autonomous` starts a run that self-wakes via ScheduleWakeup until
+it reaches a terminal state (`complete` / `failed` / `budgetLimited` /
+`cleared`) or is paused. Sync mode (no flag) preserves v5.6 behavior.
+
+### Startup sequence
+
+1. Run single-run lock check:
+   `python3 ~/.claude/skills/automl/scripts/run_lock.py {workdir}/.automl`
+   - If another active autonomous run exists → refuse, print run_id, suggest pause/clear
+2. Initialize state.json with `autonomous: true`, `lifecycle_state: "active"`,
+   `budget.started_at = now`, `state_version = 0`
+3. Run Phase 0/1 normally (System Context Dialogue NOT skippable per v5.6 hard rule)
+4. After Phase 1 complete and Phase 2 starts: enter autonomous tick loop
+
+### Tick gate sequence (FIXED ORDER)
+
+Each tick start, in this exact order:
+
+```
+1. paused short-circuit
+   if lifecycle_state == "paused" → exit (do not schedule next wake)
+
+2. terminal short-circuit
+   if lifecycle_state in {complete, failed, budgetLimited, cleared} → exit
+
+3. Claude quota pre-check (any non-null bucket >= 75%)
+   quota = python3 ~/.claude/skills/automl/scripts/quota_check.py
+   triggered = check_buckets(quota, threshold=75.0)
+   if triggered:
+     transition lifecycle_state → "quota_wait"
+     write target_resume_at = bucket.resets_at + 5min
+     ScheduleWakeup(min(3600, target_resume_at - now), "<<autonomous-loop-dynamic>>")
+     write quota_state.claude (cas_write)
+     exit
+
+4. Budget check (G4)
+   if ticks_used >= max_total_ticks or wall_minutes >= max_wall_minutes:
+     transition lifecycle_state → "budgetLimited"
+     log changelog "budget exhausted: ticks=X/Y, wall=Z/W min"
+     Discord push (terminal idempotency key)
+     exit (no wake)
+
+5. ticks_used++ (only after passing all gates)
+
+6. Run normal Phase 2/3 work
+```
+
+### Post-tick re-check (after subagent returns)
+
+```
+quota_after = python3 ~/.claude/skills/automl/scripts/quota_check.py
+record quota_history entry: {tick_n, before, after, jump, tokens_used_this_tick}
+
+if any bucket utilization >= 75 → quota_wait (same as pre-check)
+if jump > 30 → quota_wait (force sleep even if absolute < 75)
+if jump > 20 → throttle_until = now + 30min (next wake interval = 1800s)
+
+if lifecycle_state still "active":
+  interval = 1800s if throttle_until > now else 90s
+  ScheduleWakeup(interval, "<<autonomous-loop-dynamic>>")
+```
+
+### Codex quota signal (post-hoc)
+
+When subagent dispatch fails, parse stderr for quota signals:
+
+```
+if stderr contains "Codex 5h window at" or "rate_limit" or "429" or "quota":
+  transition lifecycle_state → "quota_wait"
+  target_resume_at = now + 3600s (Codex doesn't provide reset_at)
+  ScheduleWakeup(3600, "<<autonomous-loop-dynamic>>")
+  DO NOT increment retry_count, DO NOT reset retry_count (preserves prior failures)
+  exit
+```
+
+### Terminal-state adapter
+
+For ANY v5.6 stop/error path (phase=done, subagent stuck escalation, evaluator
+setup error), if `autonomous == true`:
+
+1. Set lifecycle_state → "complete" or "failed" appropriately
+2. Discord push with idempotency_key = `{run_id}:{lifecycle_state}:{first_entry_ts}`
+3. Exit without scheduling next wake
+
+Without this wrapper, autonomous run continues waking on these paths but does
+no work + skips Discord notification.
+
+### Wake handler robustness
+
+`<<autonomous-loop-dynamic>>` may fire after the run was `clear --rm`'d.
+Handler MUST tolerate missing run dir / corrupt state.json: log warning + exit
+cleanly, do not crash.
+
+### Failure handling for quota helper (E5 fail-closed)
+
+If `quota_check.py` raises (network down, token expired):
+1. `quota_state.claude.consecutive_http_failures++`
+2. If counter < 3: log warning, skip this tick's gate (continue main loop)
+3. If counter >= 3: transition → quota_wait, ScheduleWakeup(300s, sentinel),
+   re-probe at next wake
+4. If counter >= 9 (15 min of consecutive failures): transition → failed,
+   Discord push "Anthropic OAuth quota check broken — please verify token /
+   network", exit
+
 ## Phase 2 — 執行 + 自我檢驗 Loop
 
 > 這是 automl 的核心引擎。
