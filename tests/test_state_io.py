@@ -124,3 +124,21 @@ def test_cas_write_with_retry_raises_after_max_retries(tmp_path):
 
     with pytest.raises(state_io.StateConflict):
         state_io.cas_write_with_retry(state_path, always_conflict, max_retries=3)
+
+
+def test_v56_run_loaded_then_written_preserves_compat(tmp_path):
+    """Full round-trip: load v5.6 fixture, modify (non-autonomous field),
+    cas_write, reload — autonomous=false preserved, no v5.7 enabling."""
+    src = Path(__file__).parent / "fixtures" / "v5.6_state_phase2.json"
+    dst = tmp_path / "state.json"
+    dst.write_text(src.read_text())
+
+    state = state_io.load(dst)
+    state["current_iter"] = 4  # simulate v5.6 progression
+    state_io.cas_write(dst, state, expected_version=0)
+
+    reloaded = state_io.load(dst)
+    assert reloaded["current_iter"] == 4
+    assert reloaded["autonomous"] is False  # NOT auto-enabled by v5.7 read
+    assert reloaded["lifecycle_state"] == "active"
+    assert reloaded["state_version"] == 1
