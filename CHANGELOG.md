@@ -1,5 +1,59 @@
 # Changelog
 
+## v5.8.0 — 2026-05-04
+
+Autonomous Mode (opt-in) — `/automl --autonomous` self-drives long-horizon runs until terminal state, with quota-aware sleep, lifecycle commands, and budget caps. Reaches OpenAI Codex `/goal` equivalent capability in CC harness.
+
+### Features
+
+- **Autonomous wake mode**: `/automl --autonomous` flag enables tick loop self-scheduling via ScheduleWakeup until terminal state (`complete` / `failed` / `budgetLimited` / `cleared`). Single-run lock per repo (multi-run is Tier 3).
+- **Hybrid dual-quota gate**: Claude OAuth pre-check at tick start (any non-null bucket >= 75%, 30s on-disk response cache); Codex via existing wrapper post-hoc + stderr parsing for `Codex 5h window at` / `429` / `rate_limit` signals. Pre-active gate prevents orchestrator from hitting limit mid-turn.
+- **Lifecycle commands**: `/automl pause` (soft, finishes current tick) / `resume` (re-checks lock + quota + sets `lifecycle_state="active"`) / `clear [--rm]` / `status [run_id]`. run_id resolution defaults to active autonomous run.
+- **Global budget cap**: `max_total_ticks=50` + `max_wall_minutes=480` defaults; `--extend-budget +N` to top up on resume.
+- **Discord push**: terminal states + first quota_wait entry, idempotency-keyed (key = `{run_id}:{lifecycle_state}:{first_entry_ts}`), webhook URL from `~/.config/automl/discord_webhook.url` (gitignored). Push failures silently logged to `discord_push_log` — never block lifecycle transitions.
+- **Helper scripts under `scripts/`**: `quota_check.py` (Anthropic OAuth), `discord_push.py` (idempotent webhook), `state_io.py` (CAS write + v5.7→v5.8 default-fill), `lifecycle.py` (pure-function state machine), `run_lock.py` (single-run scan).
+- **Test infrastructure under `tests/`**: 26 tests covering pure functions + CAS race + migration fixture + idempotency + fail-closed retry counter.
+- **Anthropic OAuth quota endpoint discovered**: `GET https://api.anthropic.com/api/oauth/usage` with macOS Keychain `Claude Code-credentials` token + `anthropic-beta: oauth-2025-04-20` header returns five_hour / seven_day / per-model utilization. Codexbar uses same endpoint.
+- **Phase α validation appendix**: spec §4 documents empirically-verified ScheduleWakeup behavior (last-write-wins, integer-minute round-up, user prompt does NOT cancel pending wake) before design relied on it.
+
+### Schema Migration
+
+v5.7 → v5.8 is **strict additive only**. Pre-v5.8 in-flight runs (v5.6 / v5.7) read with default-fill (`autonomous=false`), continue to run as before. No migration code; defaults populated by `state_io.load()`.
+
+New state.json fields (all optional, defaults documented in `scripts/state_io.py:V57_DEFAULTS`):
+- `autonomous`, `lifecycle_state`, `paused`, `next_wake_at`, `target_resume_at`, `last_tick_at`, `state_version`
+- `quota_state.{claude,codex}` with utilization tracking
+- `quota_history`, `budget`, `discord_push_log`
+
+### Fixes from Pre-Implementation Review (3-way: CEO + Eng + Codex)
+
+- **E5 fail-closed default** (3/3 reviewer consensus): quota check HTTP fail → 3 consecutive fails enter quota_wait 5min retry; ≥9 fails (15min) → fatal + Discord push. Was incorrectly fail-open in earlier draft.
+- **state.json CAS protocol** (Eng + Codex): `state_version` counter + tmpfile + `os.replace()` atomic rename + retry up to 3 times on conflict. Prevents lifecycle command vs wake handler races.
+- **Decision tree paused short-circuit at top** (Eng): paused → terminal → quota → budget → ticks_used++. Without paused short-circuit at top, paused runs would still consume tick budget on each wake.
+- **Codex quota predicate removed from main session** (Codex C2 critical): main session has no Codex quota telemetry refresh, so the predicate referenced uncomputed data. Codex quota now purely wrapper post-hoc + stderr parsing.
+- **resume sets `lifecycle_state="active"` explicitly** (Codex C1 critical): without this, wake handler sees paused state and exits immediately, defeating resume.
+- **Terminal-state adapter wrapping pre-v5.8 stop paths** (Codex C3): existing `phase=done` / subagent stuck escalation / evaluator setup error paths must set `lifecycle_state` and trigger Discord push for autonomous runs.
+- **Codex quota_hit retry_count semantics**: NOT incremented, NOT reset (Eng) — preserves prior transient fail counter to avoid "2 transient + 1 quota + resume → next failure stuck" misclassification.
+
+### Tier 2 / 3 Boundary
+
+OUT of v5.8 scope (Tier 3 candidates):
+- Multi-run parallelism (single-run lock enforced; one active autonomous run per repo)
+- External watchdog daemon (cross-quota-window auto-resume from OS level)
+- Mid-run autonomous enable (resume can't switch a run from sync to autonomous)
+- `--simple` flag to skip System Context Dialogue (v5.6 SCD non-skippable rule preserved)
+
+### Documentation
+
+- Spec: `docs/superpowers/specs/2026-05-04-automl-autonomous-mode-design.md` (467 lines, 12 sections, 9 lock-ins, Phase α validation appendix)
+- Implementation plan: `docs/superpowers/plans/2026-05-04-automl-autonomous-mode-implementation.md` (1900 lines, 12 phases, TDD per task)
+- Wiki: new pattern article `pre-active-quota-gate-pattern.md` + new reference article `claude-code-harness-behavior.md`; updated `agent-autonomy-tiers.md` (Tier 2 second implementation) + `automl.md` (v5.4-v5.8 evolution)
+- Memory: `reference_anthropic_oauth_quota.md` documents Anthropic OAuth quota endpoint usage
+
+(Note: spec / plan / wiki retain "v5.7" labels as frozen design docs; the rename to v5.8 happened during implementation when the version collision with the prior v5.7.0 release was discovered. SKILL.md is canonical for version.)
+
+---
+
 ## v5.7.0 — 2026-04-01
 
 Environment Gap Research Gate — research production constraints before designing evaluators.
