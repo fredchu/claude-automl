@@ -1,6 +1,6 @@
 ---
 name: automl
-version: 5.6.0
+version: 5.7.0
 description: |
   Autonomous Evaluation Loop — 從對齊意圖到自主執行的完整引擎。
   四階段：Phase 0 釐清 → Phase 1 拆解定標準（含 System Context Dialogue） → Phase 2 執行+自我檢驗 loop → Phase 3 交付驗收。
@@ -902,6 +902,56 @@ Phase 2 開始時，掃描 `.automl/` 目錄：
   "last_updated": "2026-03-28T14:35:00"
 }
 ```
+
+## v5.6 → v5.7 Schema Migration (Strict Additive)
+
+v5.7 adds autonomous mode fields. Strictly additive — v5.6 in-flight runs
+are read with default-fill (`autonomous=false`), continue to run as v5.6.
+No migration code required; defaults are populated by `state_io.load()`.
+
+```json
+{
+  "schema_version": "5.7",
+  // ... all v5.6 fields preserved ...
+
+  "autonomous": false,
+  "lifecycle_state": "active",
+  "paused": false,
+  "next_wake_at": null,
+  "target_resume_at": null,
+  "last_tick_at": null,
+  "state_version": 0,
+
+  "quota_state": {
+    "claude": {
+      "last_check_at": null,
+      "utilization": null,
+      "resets_at": null,
+      "triggered_bucket": null,
+      "throttle_until": null,
+      "consecutive_http_failures": 0
+    },
+    "codex": {
+      "last_check_at": null,
+      "utilization": null,
+      "resets_at": null
+    }
+  },
+  "quota_history": [],
+
+  "budget": {
+    "max_total_ticks": 50,
+    "max_wall_minutes": 480,
+    "ticks_used": 0,
+    "started_at": null
+  },
+
+  "discord_push_log": []
+}
+```
+
+**Lifecycle state values**: `active`, `paused`, `quota_wait`, `complete`,
+`failed`, `budgetLimited`, `cleared` (see lifecycle.py for valid transitions).
 
 **State file 的角色是「當前快照」，changelog 的角色是「完整歷史」。兩者互補。**
 
