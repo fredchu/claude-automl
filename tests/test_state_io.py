@@ -142,3 +142,20 @@ def test_v56_run_loaded_then_written_preserves_compat(tmp_path):
     assert reloaded["autonomous"] is False  # NOT auto-enabled by v5.7 read
     assert reloaded["lifecycle_state"] == "active"
     assert reloaded["state_version"] == 1
+
+
+def test_load_v5_9_state_default_fills_v5_10_flags(tmp_path):
+    """v5.9 state.json missing flags + env → load() default-fills both."""
+    p = tmp_path / "state.json"
+    p.write_text(json.dumps({
+        "schema_version": "5.9",
+        "autonomous": True,
+        "lifecycle_state": "active",
+    }))
+    state = state_io.load(p)
+    assert state["flags"] == {
+        "goal": False, "cap": False,
+        "max_ticks_override": None, "max_wall_override": None,
+        "no_codex": False,
+    }
+    assert state["env"] == {"codex_available": None}

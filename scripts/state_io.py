@@ -64,6 +64,17 @@ def load(path: Path) -> dict:
     with open(path) as f:
         state = json.load(f)
     _deep_default_fill(state, V57_DEFAULTS)
+    # v5.10 additive: flags + env
+    state.setdefault("flags", {})
+    flags = state["flags"]
+    flags.setdefault("goal", False)
+    flags.setdefault("cap", False)
+    flags.setdefault("max_ticks_override", None)
+    flags.setdefault("max_wall_override", None)
+    flags.setdefault("no_codex", False)
+
+    state.setdefault("env", {})
+    state["env"].setdefault("codex_available", None)
     return state
 
 
