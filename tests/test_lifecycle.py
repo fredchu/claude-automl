@@ -62,3 +62,25 @@ def test_should_short_circuit_at_tick_start():
         assert lifecycle.should_short_circuit(state), f"{state} should short-circuit"
     for state in ["active", "quota_wait"]:
         assert not lifecycle.should_short_circuit(state), f"{state} should NOT short-circuit"
+
+
+def test_context_critical_in_valid_states():
+    """context_critical is a valid state."""
+    assert "context_critical" in lifecycle.VALID_STATES
+
+
+def test_context_critical_transitions():
+    """active -> context_critical (entry) and context_critical -> active (resume)."""
+    assert lifecycle.transition_valid("active", "context_critical")
+    assert lifecycle.transition_valid("context_critical", "active")
+    assert lifecycle.transition_valid("context_critical", "cleared")
+
+
+def test_context_critical_not_terminal():
+    """context_critical is not terminal - user can /clear + resume."""
+    assert not lifecycle.is_terminal("context_critical")
+
+
+def test_context_critical_short_circuits_tick():
+    """context_critical short-circuits tick (no subagent dispatch)."""
+    assert lifecycle.should_short_circuit("context_critical")

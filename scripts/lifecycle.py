@@ -8,9 +8,11 @@ from __future__ import annotations
 
 VALID_STATES = frozenset({
     "active", "paused", "quota_wait",
+    "context_critical",
     "complete", "failed", "budgetLimited", "cleared",
 })
 
+# context_critical is NOT terminal - user can /clear + resume
 TERMINAL_STATES = frozenset({"complete", "failed", "budgetLimited", "cleared"})
 
 # (src, dst) → allowed
@@ -32,6 +34,13 @@ ALLOWED_TRANSITIONS = frozenset({
     ("budgetLimited", "cleared"),
 })
 
+ALLOWED_TRANSITIONS = ALLOWED_TRANSITIONS | frozenset({
+    ("active", "context_critical"),
+    ("context_critical", "active"),
+    ("context_critical", "paused"),
+    ("context_critical", "cleared"),
+})
+
 
 def transition_valid(src: str, dst: str) -> bool:
     """True if transitioning src→dst is allowed."""
@@ -46,5 +55,9 @@ def is_terminal(state: str) -> bool:
 
 
 def should_short_circuit(state: str) -> bool:
-    """True if tick should short-circuit at top (paused or terminal)."""
-    return state == "paused" or is_terminal(state)
+    """True if tick should short-circuit at top.
+
+    context_critical must not dispatch subagents because that would inflate
+    context further. User must manually /clear + /automl resume.
+    """
+    return state in {"paused", "context_critical"} or is_terminal(state)
