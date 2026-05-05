@@ -1,5 +1,21 @@
 # Changelog
 
+## v5.10.0-pr1 — 2026-05-05
+
+### Fixed
+- **Dispatch implementation aligned with v5.9 routing matrix**：line 1311 `model="sonnet"` hardcoded fix；line 1187 default `task_loop: null`（依 matrix）。β-4 dogfood 派工漂移 root cause 修復。
+
+### Added
+- `scripts/dispatch_router.py`：reflex Q1-Q6 → executor + cmd resolution（pure function，11 個 unit test 涵蓋全 matrix paths）
+- `scripts/run_lock.py::detect_codex_available()`：startup auto-detect codex-dispatch 是否安裝；寫 `state.env.codex_available`
+- `--no-codex` flag：強制 codex 場景 fallback claude:sonnet（保留條 #3 opus）
+- Phase 3 Step 2 RISK_REVIEW：opus + codex:reviewer 平行 cross-check（codex 不存在時 opus 單跑）
+- state schema 5.10 additive fields：`flags{goal,cap,max_ticks_override,max_wall_override,no_codex}` + `env{codex_available}`
+
+### Changed
+- Routing matrix v5.10：條 #1（cross-system）+ #2（跨多檔架構）+ #4a（abstraction）→ codex:worker；條 #3（探索性）→ opus；條 #4b（命名/UI）keep sonnet；條 #10（fallback）keep sonnet
+- skill-mapping.md / automl-reference.md 同步更新
+
 ## v5.8.0 — 2026-05-04
 
 Autonomous Mode (opt-in) — `/automl --autonomous` self-drives long-horizon runs until terminal state, with quota-aware sleep, lifecycle commands, and budget caps. Reaches OpenAI Codex `/goal` equivalent capability in CC harness.

@@ -115,6 +115,10 @@ Built for any improvement task: code (tests, builds), articles (quality checklis
 
 **max_regression_rounds** — how many rounds of outer regression check to attempt before giving up on conflicting tasks. Default: 3.
 
+**Flags**
+
+- `--no-codex`：強制不用 codex-dispatch，所有 codex 場景 fallback claude:sonnet（保留條 #3 opus）。給沒裝 codex-dispatch 的用戶 / 想省 ChatGPT quota 的場景。
+
 ## Skill Integrations
 
 Skills are a first-class part of automl. Phase 2 requires a skill on every task. Phases 0, 1, and 3 have recommended defaults.
