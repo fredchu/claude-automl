@@ -615,12 +615,26 @@ Each tick start, in this exact order:
      write quota_state.claude (cas_write)
      exit
 
-4. Budget check (G4)
-   if ticks_used >= max_total_ticks or wall_minutes >= max_wall_minutes:
-     transition lifecycle_state → "budgetLimited"
-     log changelog "budget exhausted: ticks=X/Y, wall=Z/W min"
-     Discord push (terminal idempotency key)
-     exit (no wake)
+4. Budget check (G4) — v5.10：only when state.flags.cap is True
+   if state.flags.cap:
+     limits.ticks = state.flags.max_ticks_override or 50
+     limits.wall = state.flags.max_wall_override or 480
+     if ticks_used >= limits.ticks or wall_minutes >= limits.wall:
+       transition lifecycle_state → "budgetLimited"
+       log changelog "budget exhausted: ticks=X/Y, wall=Z/W min"
+       Discord push (terminal idempotency key)
+       exit (no wake)
+   else:
+     # --goal no-cap：not enforced, but log soft-hint advisory
+     if ticks_used in (50, 100, 200) or wall_minutes in (480, 960, 1440):
+       Discord push hint「跑了 N ticks / M min 還沒完，要不要 /automl pause？」(idempotency key includes bucket)
+
+4b. Phase 3 retry cap check — v5.10：only when state.flags.cap is True
+    if state.flags.cap and phase3.retry_count >= 2:
+      transition → failed
+      Discord push
+      exit
+    # --goal no-cap：retry_count 不卡，repeat_loop_detector 是替代逃生閥（見 §Hard Stops）
 
 5. ticks_used++ (only after passing all gates)
 
