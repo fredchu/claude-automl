@@ -174,7 +174,7 @@ Three subagents run in sequence: FINAL_VERIFICATION re-runs all evaluators and r
 - Max iterations cap prevents runaway token usage
 - Each evaluator call has a 120-second timeout
 - Every run is isolated in its own `.automl/{run_id}/` directory
-- Phase 3 retry limit: max 2 retries with `retry_log` recording each regression's cause and affected tasks — prevents infinite Phase 3 loops
+- Phase 3 retry limit: max 2 retries in `--cap` mode; `--goal` no-cap defaults to `repeat_loop_detector` fallback, with `retry_log` recording each regression's cause and affected tasks
 - Phase 3 skill constraint: DELIVERABLE_REVIEW and RISK_REVIEW subagents are restricted to their declared skills and diff scope — cannot expand into Phase 2 execution
 - Red team safety cap: max 2 rounds per task, max 2 auto-fix rounds — prevents token waste on evaluators that cannot be strengthened
 
@@ -340,7 +340,7 @@ Skill 在 automl 是一等公民。Phase 2 的每個 task 都必須宣告 skill�
 每個 task 必須宣告 skill。推薦對應：bug 修復 → `/investigate`，新功能 → TDD skill，重構 → `/review`，效能 → `/benchmark`。完整對照表見 `references/skill-mapping.md`。
 
 **Phase 3 — 交付驗收（必填）**
-三個 subagent 依序執行：FINAL_VERIFICATION、RISK_REVIEW、CODE_REVIEW。Risk review 建議用 `/investigate` 或 `/cso`，code review 建議用 `/review`。發現 regression 最多重試 2 次，每次失敗原因記錄在 retry_log。
+三個 subagent 依序執行：FINAL_VERIFICATION、RISK_REVIEW、CODE_REVIEW。Risk review 建議用 `/investigate` 或 `/cso`，code review 建議用 `/review`。發現 regression 最多重試 2 次（`--cap` 模式；`--goal` no-cap 預設由 repeat_loop_detector 兜底），每次失敗原因記錄在 retry_log。
 
 ## 使用範例
 

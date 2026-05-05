@@ -964,8 +964,8 @@ Phase 3 任一 step BLOCKED 後回 Phase 2 fix 時：
 
 **v5.8 autonomous mode addition:** When `state.autonomous == true`, the
 following short-circuits run BEFORE the legacy pre-v5.8 decision tree (see
-"Autonomous Mode" chapter for the FIXED tick gate sequence: paused →
-terminal → quota → budget → ticks_used++).
+"Goal Mode (v5.10)" chapter for the FIXED tick gate sequence: paused →
+terminal → quota → context (v5.10) → cap-gated budget → cap-gated Phase 3 retry → ticks_used++).
 
 When `state.autonomous == false` (default), behavior is identical to v5.6.
 
@@ -1007,7 +1007,11 @@ described in the autonomous chapter.
 
 **斷點續傳**：Phase 3 開始時，讀 `state.json` 的 `phase3.step` 欄位，從上次中斷的 step 繼續（跟 Phase 2 的 Step 0 同理）。已完成的 step 結果保存在 state file 中，不重跑。
 
-**回退計數**：`retry_count` 是整個 Phase 3 流程共用的 counter。語意：**Phase 3 總共最多回退 Phase 2 兩次**。不管是哪個 step 觸發的回退，都計入同一個 counter。超過 2 次代表 Phase 2 反覆修不好，繼續重試沒有意義。
+**回退計數**（v5.10 cap-gated）：`retry_count` 是整個 Phase 3 流程共用的 counter。語意：
+- 當 `state.flags.cap == True`（軟煞車模式 / `--autonomous` alias）：Phase 3 總共最多回退 Phase 2 兩次。超過 2 次 → failed。
+- 當 `state.flags.cap == False`（`--goal` no-cap 預設）：retry_count **不卡 hard limit**，由 `repeat_loop_detector` 兜底（最近 3 筆 retry_log reason hash 相同 → failed，避免死循環）。
+
+不管是哪個 step 觸發的回退，都計入同一個 counter（兩種模式都記錄）。
 
 **回退後的重啟流程**：任何 step 觸發回退時：
 1. `retry_count++`，記錄原因到 `retry_log`
@@ -1018,9 +1022,12 @@ described in the autonomous chapter.
 
 ```
 讀 state.json（phase == 3）
-├── phase3.retry_count >= 2？
+├── state.flags.cap and phase3.retry_count >= 2？
 │   └── 停止，報告「Phase 3 回退已達上限（2/2），仍有未解問題」
 │       列出每次回退的原因（從 phase3.retry_log 讀取）
+├── (not cap) repeat_loop_detector.detect_repeat_loop(phase3.retry_log)？
+│   └── 停止，報告「repeat-loop detected: 3x same reason → failed」
+│       Discord push idempotency_key=f"{run_id}:repeat_loop:{retry_log[-1]['ts']}"
 │
 ├── 從 phase3.step 繼續（斷點續傳）：
 │
