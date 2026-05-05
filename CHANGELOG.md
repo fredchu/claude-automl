@@ -1,5 +1,22 @@
 # Changelog
 
+## v5.10.0-pr2 — 2026-05-05
+
+### Added
+- `--goal` flag：Tier 2 autonomous mode，default no budget cap / no Phase 3 retry cap
+- `--cap` modifier：opt-in soft caps (max_total_ticks=50, max_wall_minutes=480, Phase 3 retry_count<=2)
+- `--max-ticks=N` / `--max-wall=M` modifiers (only effective with `--cap`)
+- `scripts/repeat_loop_detector.py`：sliding-window hash check (Phase 3 retry_log 最近 3 筆 reason 完全相同 → failed)
+- Hard Stops 段：5 個無條件生效的 stop（quota / RED_TEAM / stuck / context_critical / repeat-loop）
+- Goal Mode startup sequence wires `state.env.codex_available = run_lock.detect_codex_available()` (resolves PR 1 review finding #2)
+
+### Changed
+- Tick gate budget check：only when state.flags.cap is True；no-cap 模式僅推 advisory hint（不 transition budgetLimited）
+- Phase 3 retry_count cap：only when state.flags.cap is True；no-cap 場景靠 repeat_loop_detector 兜底
+
+### Deprecated
+- `--autonomous` flag（v5.8 ship 1 日，無外部用戶）：v5.10 alias = `--goal --cap`，v5.11 移除
+
 ## v5.10.0-pr1 — 2026-05-05
 
 ### Fixed

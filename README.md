@@ -118,6 +118,10 @@ Built for any improvement task: code (tests, builds), articles (quality checklis
 **Flags**
 
 - `--no-codex`：強制不用 codex-dispatch，所有 codex 場景 fallback claude:sonnet（保留條 #3 opus）。給沒裝 codex-dispatch 的用戶 / 想省 ChatGPT quota 的場景。
+- `--goal`：Tier 2 autonomous mode（無 budget cap，跑到完）。對齊業界 longer-horizon agentic direction。
+- `--cap`：與 `--goal` 同用，opt-in 軟煞車（max_total_ticks=50, max_wall_minutes=480, Phase 3 retry_count<=2）
+- `--max-ticks=N` / `--max-wall=M`：custom cap（僅 `--cap` 生效時有效）
+- `--autonomous`：v5.10 deprecation alias = `--goal --cap`，v5.11 移除
 
 ## Skill Integrations
 
