@@ -75,6 +75,13 @@ def load(path: Path) -> dict:
 
     state.setdefault("env", {})
     state["env"].setdefault("codex_available", None)
+
+    state.setdefault("context_state", {})
+    ctx = state["context_state"]
+    ctx.setdefault("last_check_at", None)
+    ctx.setdefault("used_pct", None)
+    ctx.setdefault("window_size", None)
+    ctx.setdefault("alert_buckets_pushed", [])
     return state
 
 

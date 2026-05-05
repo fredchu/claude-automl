@@ -174,3 +174,16 @@ def test_load_v5_10_state_with_partial_flags(tmp_path):
     assert state["flags"]["goal"] is True
     assert state["flags"]["cap"] is False
     assert state["flags"]["no_codex"] is False
+
+
+def test_load_v5_10_state_default_fills_context_state(tmp_path):
+    """v5.9 state → context_state default-filled."""
+    p = tmp_path / "state.json"
+    p.write_text(json.dumps({"schema_version": "5.9"}))
+    state = state_io.load(p)
+    assert state["context_state"] == {
+        "last_check_at": None,
+        "used_pct": None,
+        "window_size": None,
+        "alert_buckets_pushed": [],
+    }
