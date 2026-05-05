@@ -619,7 +619,7 @@ Each tick start, in this exact order:
     transcript_path = locate_transcript(state["session_id"])
     ctx = context_check.check(
       transcript_path,
-      window_size_override=state["context_state"].get("window_size")
+      window_size_override=state["context_state"].get("window_size_override")
     )
     state["context_state"]["last_check_at"] = now
     state["context_state"]["used_pct"] = ctx["used_percentage"]
@@ -737,13 +737,25 @@ if any bucket utilization >= 75 → quota_wait (same as pre-check)
 if jump > 30 → quota_wait (force sleep even if absolute < 75)
 if jump > 20 → throttle_until = now + 30min (next wake interval = 1800s)
 
-post-tick context check — hint buckets
+post-tick context check — critical first, then hints (>=80 critical; 60/65/70/75 hint buckets)
 ctx = context_check.check(transcript_path)
-if 60 <= ctx["used_percentage"] < 80:
+state["context_state"]["used_pct"] = ctx["used_percentage"]
+state["context_state"]["window_size"] = ctx["window_size"]
+state["context_state"]["last_check_at"] = now
+
+if ctx["used_percentage"] >= 80:
+  # Critical: subagent inflated context above threshold during this tick
+  transition lifecycle_state → "context_critical"
+  Discord push format_context_critical(run_id, used_pct, used_tokens, window_size)
+  (idempotency_key = run_id:context_critical:first_entry_ts)
+  ScheduleWakeup +6h (give user time to /clear + resume manually)
+  exit (do not schedule normal next wake)
+elif 60 <= ctx["used_percentage"] < 80:
   bucket = floor(ctx["used_percentage"] / 5) * 5  # 60/65/70/75
   if bucket not in state["context_state"]["alert_buckets_pushed"]:
     Discord push format_context_hint(run_id, bucket, ctx["used_percentage"])
     state["context_state"]["alert_buckets_pushed"].append(bucket)
+# else: < 60 → no action
 
 if lifecycle_state still "active":
   interval = 1800s if throttle_until > now else 90s

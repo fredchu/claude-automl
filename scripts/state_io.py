@@ -82,6 +82,8 @@ def load(path: Path) -> dict:
     ctx.setdefault("used_pct", None)
     ctx.setdefault("window_size", None)
     ctx.setdefault("alert_buckets_pushed", [])
+    ctx.setdefault("consecutive_context_failures", 0)
+    ctx.setdefault("window_size_override", None)
     return state
 
 

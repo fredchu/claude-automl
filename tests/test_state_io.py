@@ -186,4 +186,15 @@ def test_load_v5_10_state_default_fills_context_state(tmp_path):
         "used_pct": None,
         "window_size": None,
         "alert_buckets_pushed": [],
+        "consecutive_context_failures": 0,
+        "window_size_override": None,
     }
+
+
+def test_load_state_default_fills_context_failures_and_override(tmp_path):
+    """v5.10 cleanup: consecutive_context_failures and window_size_override default-filled."""
+    p = tmp_path / "state.json"
+    p.write_text(json.dumps({"schema_version": "5.9"}))
+    state = state_io.load(p)
+    assert state["context_state"]["consecutive_context_failures"] == 0
+    assert state["context_state"]["window_size_override"] is None
