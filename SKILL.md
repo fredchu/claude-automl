@@ -615,6 +615,28 @@ Each tick start, in this exact order:
      write quota_state.claude (cas_write)
      exit
 
+3b. Context pre-check (v5.10) — hard transition
+    transcript_path = locate_transcript(state["session_id"])
+    ctx = context_check.check(
+      transcript_path,
+      window_size_override=state["context_state"].get("window_size")
+    )
+    state["context_state"]["last_check_at"] = now
+    state["context_state"]["used_pct"] = ctx["used_percentage"]
+    state["context_state"]["window_size"] = ctx["window_size"]
+
+    if ctx["used_percentage"] >= 80:
+      transition lifecycle_state → "context_critical"
+      Discord push format_context_critical (idempotency_key = run_id:context_critical:first_entry_ts)
+      ScheduleWakeup +6h (give user time to /clear + resume manually)
+      exit (do not dispatch subagent — would inflate context further)
+
+    if context_check.check raises (transcript missing / parse error):
+      log warning, fail-open (skip gate this tick)
+      state["context_state"]["consecutive_context_failures"]++
+      if state["context_state"]["consecutive_context_failures"] >= 3:
+        Discord push warning「context probe broken」
+
 4. Budget check (G4) — v5.10：only when state.flags.cap is True
    if state.flags.cap:
      limits.ticks = state.flags.max_ticks_override or 50
@@ -714,6 +736,14 @@ record quota_history entry: {tick_n, before, after, jump, tokens_used_this_tick}
 if any bucket utilization >= 75 → quota_wait (same as pre-check)
 if jump > 30 → quota_wait (force sleep even if absolute < 75)
 if jump > 20 → throttle_until = now + 30min (next wake interval = 1800s)
+
+post-tick context check — hint buckets
+ctx = context_check.check(transcript_path)
+if 60 <= ctx["used_percentage"] < 80:
+  bucket = floor(ctx["used_percentage"] / 5) * 5  # 60/65/70/75
+  if bucket not in state["context_state"]["alert_buckets_pushed"]:
+    Discord push format_context_hint(run_id, bucket, ctx["used_percentage"])
+    state["context_state"]["alert_buckets_pushed"].append(bucket)
 
 if lifecycle_state still "active":
   interval = 1800s if throttle_until > now else 90s
