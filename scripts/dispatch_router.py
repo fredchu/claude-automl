@@ -32,6 +32,14 @@ def _match_rows(attrs: dict[str, Any]) -> list[tuple[int, str, str]]:
         and attrs.get("fix_direction_clear", True)
     ):
         matched.append((5, "codex-dispatch:worker", "single file + spec complete"))
+    if attrs.get("scoped_bug_fix"):
+        matched.append((6, "codex-dispatch:worker", "scoped bug fix"))
+    if attrs.get("local_refactor"):
+        matched.append((7, "codex-dispatch:worker", "local refactor"))
+    if attrs.get("unit_test_single_fn"):
+        matched.append((8, "codex-dispatch:worker", "unit test single function"))
+    if attrs.get("mechanical_plan"):
+        matched.append((9, "codex-dispatch:worker", "mechanical plan implementation"))
     return matched
 
 

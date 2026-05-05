@@ -57,6 +57,52 @@ def test_row5_single_file_spec_complete_codex():
     assert r["executor"] == "codex-dispatch:worker"
 
 
+def test_row6_scoped_bug_fix_codex():
+    """Row #6: scoped bug fix -> codex:worker."""
+    attrs = _attrs(file_count=2)
+    attrs["scoped_bug_fix"] = True
+    r = dr.resolve(attrs, codex_available=True, no_codex=False)
+    assert r["executor"] == "codex-dispatch:worker"
+    assert "6" in r["matched_rows"]
+
+
+def test_row7_local_refactor_codex():
+    """Row #7: local refactor -> codex:worker."""
+    attrs = _attrs(file_count=2)
+    attrs["local_refactor"] = True
+    r = dr.resolve(attrs, codex_available=True, no_codex=False)
+    assert r["executor"] == "codex-dispatch:worker"
+    assert "7" in r["matched_rows"]
+
+
+def test_row8_unit_test_codex():
+    """Row #8: unit test for single function -> codex:worker."""
+    attrs = _attrs(file_count=2)
+    attrs["unit_test_single_fn"] = True
+    r = dr.resolve(attrs, codex_available=True, no_codex=False)
+    assert r["executor"] == "codex-dispatch:worker"
+    assert "8" in r["matched_rows"]
+
+
+def test_row9_mechanical_plan_codex():
+    """Row #9: mechanical plan -> codex:worker."""
+    attrs = _attrs(file_count=2)
+    attrs["mechanical_plan"] = True
+    r = dr.resolve(attrs, codex_available=True, no_codex=False)
+    assert r["executor"] == "codex-dispatch:worker"
+    assert "9" in r["matched_rows"]
+
+
+def test_rows6_to_9_fallback_when_codex_unavailable():
+    """Rows #6-#9 are codex rows, so codex unavailable falls back to sonnet."""
+    for attr_name in ("scoped_bug_fix", "local_refactor", "unit_test_single_fn", "mechanical_plan"):
+        attrs = _attrs(file_count=2)
+        attrs[attr_name] = True
+        r = dr.resolve(attrs, codex_available=False, no_codex=False)
+        assert r["executor"] == "claude:sonnet"
+        assert r["fallback_reason"] == "codex_unavailable"
+
+
 def test_row10_fallback_sonnet():
     """Row #10: nothing matches -> claude:sonnet."""
     r = dr.resolve(_attrs(spec_complete=False, fix_direction_clear=False), codex_available=True, no_codex=False)

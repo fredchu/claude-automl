@@ -834,7 +834,7 @@ Phase 2 期間，主 session 只做四件事：
 | **Phase 2 task_loop** | 見下方 routing matrix | **可變（核心）** |
 | Phase 2 regression check | claude:haiku | 固定 |
 | Phase 3 Step 1 FINAL_VERIFICATION | claude:haiku | 固定 |
-| Phase 3 Step 2 RISK_REVIEW | claude:opus | **固定（不可降級）** |
+| Phase 3 Step 2 RISK_REVIEW | **claude:opus + codex:reviewer 平行 cross-check** | 半固定（opus 不可降級；codex 不存在 → opus 單跑） |
 | Phase 3 Step 3 DELIVERABLE_REVIEW | codex:reviewer → claude:sonnet (fallback) | 半固定 |
 | **Phase 3 任一 step BLOCKED 後 retry fix** | 見下方 routing matrix（**重新評，不沿用首輪**） | **可變（核心）** |
 
@@ -868,7 +868,7 @@ Phase 2 期間，主 session 只做四件事：
 - Q3 Spec：{required_tests N / impact_path 完整 / fix_direction 寫死了}
 - Q4 Root cause 確定：{是 / 否}（Q4a abstraction → 命中 #4a codex / Q4b 命名/UI → 命中 #4b sonnet）
 - Q5 需 LLM 取捨：{無 / 命名 / abstraction / cache key namespace ...}
-- Q6 命中 matrix 第 N 條 → executor = {codex / sonnet}
+- Q6 命中 matrix 第 N 條 → executor = {codex-dispatch:worker / claude:opus / claude:sonnet}
 ```
 
 `dispatch_rationale` 必填且必須引用 matrix 條號。沒寫條號 = 違反 hard rule。
