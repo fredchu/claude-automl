@@ -819,7 +819,7 @@ Phase 2 期間，主 session 只做四件事：
 - 否則每步都要用戶按確認，違反「不主動問用戶」原則
 ```
 
-### Dispatch Routing Matrix (v5.9, hard rule)
+### Dispatch Routing Matrix (v5.10, hard rule)
 
 > **解決的問題（β-4 dogfood 漂移）：** 主 session 每次 dispatch task_loop 自由心證選 executor，已多次失誤（T1+T3+T4 fix 應 codex 派 sonnet；Phase 3 retry 2 重蹈）。
 > **解法：** 寫死決策表，每次 dispatch 前主 session 必須 (a) 逐條過 reflex checklist (b) 在 `state.task[N].dispatch_rationale` 寫命中第幾條。違反 = 主 session 違反 v3 「主 session 是調度器」原則。
@@ -842,16 +842,21 @@ Phase 2 期間，主 session 只做四件事：
 
 | # | Task 屬性 | Executor | 派工指令 |
 |---|---|---|---|
-| 1 | 多 system 串接（≥ 2 service / repo / process boundary） | claude:sonnet | `Agent(model="sonnet", ...)` |
-| 2 | 跨多檔（≥ 3 file）+ 架構決策（namespace / cache key / callback wire / module boundary） | claude:sonnet | `Agent(model="sonnet", ...)` |
-| 3 | 探索性（root cause 未明 / 修法未定） | claude:sonnet 或主 session 互動 debug | `Agent(model="sonnet", ...)` 或暫停派工 |
-| 4 | 主觀命名 / UI / abstraction 層級判斷 | claude:sonnet | `Agent(model="sonnet", ...)` |
+| 1 | 多 system 串接（≥ 2 service / repo / process boundary） | **codex:dispatch:worker** | `python3 ~/.claude/skills/codex-dispatch/scripts/codex_dispatch_role.py --task <task.md>` |
+| 2 | 跨多檔（≥ 3 file）+ 架構決策（namespace / cache key / callback wire / module boundary） | **codex:dispatch:worker** | 同上 |
+| 3 | 探索性 exploratory（root cause 未明 / 修法未定） | **claude:opus** | `Agent(model="opus", ...)` |
+| 4a | abstraction 層級判斷（抽象介面 / 泛型 / 設計模式） | **codex:dispatch:worker** | 同 codex |
+| 4b | 主觀命名 / UI / stylistic | claude:sonnet | `Agent(model="sonnet", ...)` |
 | 5 | 單檔 + spec 完整（required_tests ≥ 5 + impact_path 完整）+ deterministic | **codex:dispatch:worker** | `python3 ~/.claude/skills/codex-dispatch/scripts/codex_dispatch_role.py --task <task.md>` |
 | 6 | 範圍明確 bug fix（已知 file + root cause + fix direction） | **codex:dispatch:worker** | 同上 |
 | 7 | 局部重構（rename / 抽函式 / callback→async） | **codex:dispatch:worker** | 同上 |
 | 8 | 為單一函式補 unit test | **codex:dispatch:worker** | 同上 |
 | 9 | 已寫好 plan 的 mechanical 實作（plan 在 spec / design / phase3 retry_log） | **codex:dispatch:worker** | 同上 |
 | 10 | 都沒命中 | claude:sonnet（fallback） | `Agent(model="sonnet", ...)` |
+
+> **v5.9 → v5.10 變動**：條 #1/#2/#4a sonnet → codex:worker；條 #3 sonnet → opus；條 #4 拆 #4a (abstraction) / #4b (naming/UI)。Implementation 由 `dispatch_router.py` resolve；主 session **不再**自由心證選 model，必跑 router。
+>
+> **Codex unavailable / `--no-codex`**：codex:worker 場景 fallback claude:sonnet（條 #3 opus 保留，不 fallback）。
 
 #### Reflex checklist（主 session 每次派 task_loop / Phase 3 retry fix 前必填）
 
@@ -861,7 +866,7 @@ Phase 2 期間，主 session 只做四件事：
 - Q1 檔案數：N 個 → {≤2 / ≥3}
 - Q2 邊界：{單 process / cross-system}
 - Q3 Spec：{required_tests N / impact_path 完整 / fix_direction 寫死了}
-- Q4 Root cause 確定：{是 / 否}
+- Q4 Root cause 確定：{是 / 否}（Q4a abstraction → 命中 #4a codex / Q4b 命名/UI → 命中 #4b sonnet）
 - Q5 需 LLM 取捨：{無 / 命名 / abstraction / cache key namespace ...}
 - Q6 命中 matrix 第 N 條 → executor = {codex / sonnet}
 ```
