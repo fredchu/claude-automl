@@ -1,5 +1,26 @@
 # Changelog
 
+## v5.10.0-pr3 / v5.10.0 — 2026-05-05
+
+### Added
+- `scripts/context_check.py`：transcript JSONL reader + window size inference (override > observed > lookup > 1M default)
+- `lifecycle.context_critical` state (active ↔ context_critical, context_critical → cleared/paused; not terminal — user can /clear + resume)
+- Tick gate context pre-check (step 3b)：80% → context_critical transition + Discord push + ScheduleWakeup +6h
+- Post-tick hint buckets：60/65/70/75% 各推一次 Discord hint（alert_buckets_pushed 防重複）
+- discord_push templates：format_context_critical / format_context_hint / format_repeat_loop
+- state schema 5.10 additive：context_state{last_check_at, used_pct, window_size, alert_buckets_pushed}
+
+### Changed
+- Tick gate FIXED ORDER 加入 step 3b context pre-check（在 quota pre-check 後 / budget 前）
+
+### Documentation
+- v5.10 全景設計：docs/superpowers/specs/2026-05-05-automl-v5.10-design.md
+- v5.10 實作 plan：docs/superpowers/plans/2026-05-05-automl-v5.10.md
+
+## v5.10.0 (final) — 2026-05-05
+
+PRs 1+2+3 整合 ship。`--autonomous` deprecation alias 仍 work (v5.11 移除)。
+
 ## v5.10.0-pr2 — 2026-05-05
 
 ### Added

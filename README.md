@@ -123,6 +123,13 @@ Built for any improvement task: code (tests, builds), articles (quality checklis
 - `--max-ticks=N` / `--max-wall=M`：custom cap（僅 `--cap` 生效時有效）
 - `--autonomous`：v5.10 deprecation alias = `--goal --cap`，v5.11 移除
 
+### Context probe (v5.10)
+
+Autonomous loop 每 tick 讀 transcript JSONL，計算 context %（公式：input + cache_read + cache_creation / window_size）：
+- **80%+ → context_critical**：自動停止派 subagent，推 Discord 通知，等待用戶手動 `/automl pause` → `/clear` → `/automl resume`
+- **60/65/70/75% → hint buckets**：各推一次 Discord（建議下個 5h gate 處理）
+- Window size 推算：override → observed inference (>200k → 1M) → model lookup → 1M fallback
+
 ## Skill Integrations
 
 Skills are a first-class part of automl. Phase 2 requires a skill on every task. Phases 0, 1, and 3 have recommended defaults.
