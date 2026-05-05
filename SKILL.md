@@ -1305,16 +1305,41 @@ Baseline subagent 的工作：跑 runs_per_iter 次 evaluator，回傳一行結�
 - structural pass + semantic pass 且 task_type == "refactor" → 正常（refactor 不改功能）→ 進入 loop
 - structural fail → 正常（可能是預期的）→ 進入 loop
 
-**b) 再派 loop subagent：**
+**b) 再派 loop subagent（v5.10：依 routing matrix）：**
+
+派 task_loop subagent 前必跑 reflex Q1-Q6 → routing resolver：
+
+```python
+from scripts import dispatch_router
+
+attrs = {
+    "file_count": ...,           # Q1
+    "cross_system": ...,          # Q2
+    "architecture_decision": ..., # Q2
+    "exploratory": ...,           # Q3
+    "fix_direction_clear": ...,   # Q3
+    "abstraction": ...,           # Q4a
+    "naming_or_ui": ...,          # Q4b
+    "spec_complete": ...,         # Q3
+}
+result = dispatch_router.resolve(
+    attrs,
+    codex_available=state["env"]["codex_available"],
+    no_codex=state["flags"]["no_codex"],
+)
+state["task_list"][N]["dispatch_executor"] = result["executor"]
+state["task_list"][N]["dispatch_rationale"] = result["rationale"]
+```
+
+依 `result["executor"]` 派工：
 
 ```
-Agent(
-  prompt=TASK_LOOP_PROMPT,
-  description="automl task M improvement loop",
-  mode="auto",
-  model="sonnet"  # 預設；用戶可在 state.json params.model_overrides.task_loop 覆寫
-)
+codex-dispatch:worker  → 跑 result["command"]（包 task packet 後 exec）
+claude:opus            → Agent(prompt=TASK_LOOP_PROMPT, model="opus", description="automl task M improvement loop", mode="auto")
+claude:sonnet          → Agent(prompt=TASK_LOOP_PROMPT, model="sonnet", description="automl task M improvement loop", mode="auto")
 ```
+
+**用戶覆寫**：state.json `params.model_overrides.task_loop` 預設 `null`（=「依 matrix」）；用戶可手動設 `"sonnet"` / `"opus"` / `"haiku"` / `"codex"` 強制覆寫，主 session 看到非 null 直接用該值不跑 router。
 
 Subagent 獨立跑該 task 的完整內層 loop（改 → 檢驗 → keep/revert → 下一輪），跑完回傳一行：
 
