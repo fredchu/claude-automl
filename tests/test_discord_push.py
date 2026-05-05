@@ -57,3 +57,38 @@ def test_push_logs_success(tmp_path):
     assert result == "pushed"
     assert len(state["discord_push_log"]) == 1
     assert state["discord_push_log"][0]["http_status"] == 204
+
+
+def test_format_context_critical_message():
+    """context_critical message template."""
+    msg = discord_push.format_context_critical(
+        run_id="20260505-100000-abc",
+        used_pct=82.5,
+        used_tokens=825_000,
+        window_size=1_000_000,
+    )
+    assert "context" in msg.lower()
+    assert "82.5" in msg or "82" in msg
+    assert "/clear" in msg
+    assert "/automl resume" in msg
+
+
+def test_format_context_hint_message():
+    """context hint message template (60/65/70/75% buckets)."""
+    msg = discord_push.format_context_hint(
+        run_id="20260505-100000-abc",
+        bucket=70,
+        used_pct=72.3,
+    )
+    assert "70" in msg
+    assert "72" in msg
+    assert "5h gate" in msg
+
+
+def test_format_repeat_loop_message():
+    """repeat-loop escape valve message."""
+    msg = discord_push.format_repeat_loop(
+        run_id="20260505-100000-abc",
+        reason="Phase 2 fix didn't address bug X",
+    )
+    assert "repeat" in msg.lower() or "反覆" in msg

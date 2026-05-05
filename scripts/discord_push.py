@@ -63,3 +63,29 @@ def push(*, state: dict, webhook_url: str, idempotency_key: str, content: str) -
             "error": str(exc)[:200],
         })
         return f"failed:{type(exc).__name__}"
+
+
+def format_context_critical(run_id: str, used_pct: float, used_tokens: int, window_size: int) -> str:
+    """Critical: context >= 80%, tick paused, user must /clear + resume."""
+    return (
+        f"⚠️ Run {run_id} → context_critical. "
+        f"Context {used_pct:.1f}% ({used_tokens:,} / {window_size:,}). "
+        f"已停止派 subagent。請手動 `/automl pause` → `/clear` → `/automl resume` 重啟。"
+    )
+
+
+def format_context_hint(run_id: str, bucket: int, used_pct: float) -> str:
+    """Hint: context crossed 60/65/70/75% bucket; clear at next 5h gate."""
+    return (
+        f"💡 Run {run_id} context {used_pct:.1f}% (crossed {bucket}% bucket). "
+        f"建議下個 5h gate 進入時手動 `/clear` + resume，避免後續觸發 80% critical。"
+    )
+
+
+def format_repeat_loop(run_id: str, reason: str) -> str:
+    """Repeat-loop escape valve triggered."""
+    return (
+        f"🛑 Run {run_id} → failed (repeat-loop detected). "
+        f"Phase 2 反覆修同問題（最近 3 次 retry 原因相同）：「{reason[:120]}」"
+        f"\n需人工介入。"
+    )
