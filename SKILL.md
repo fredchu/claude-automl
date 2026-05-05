@@ -1184,8 +1184,8 @@ Phase 2 開始時，掃描 `.automl/` 目錄：
     "max_regression_rounds": 3,
     "consecutive_passes": 3,
     "model_overrides": {
-      "task_loop": "sonnet",
-      "risk_review": "opus"
+      "task_loop": null,        // null = 依 routing matrix（v5.10+）；可設 "sonnet" / "opus" / "haiku" / "codex" 強制覆寫
+      "risk_review": "opus"     // RISK_REVIEW 主跑器（v5.10：codex:reviewer 為平行 cross-check，見 Phase 3 Step 2）
     }
   },
   "phase3": {
