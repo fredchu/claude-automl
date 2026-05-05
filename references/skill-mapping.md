@@ -1,4 +1,4 @@
-# Skill Mapping 對照表
+# Skill Mapping 對照表（v5.10）
 
 > automl 主 session 在 Phase 1 拆 task 時查此表指定 skill，不用每次從零判斷。
 > 主 session 可根據具體情況覆寫，此表是預設建議。
@@ -17,6 +17,8 @@
 ---
 
 ## Phase 2 — 怎麼改
+
+> Dispatch resolution since v5.10: see SKILL.md §Dispatch Routing Matrix (v5.10) + scripts/dispatch_router.py.
 
 | 任務類型 | 強制技能 | 說明 |
 |---------|---------|------|

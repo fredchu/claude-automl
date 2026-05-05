@@ -213,6 +213,14 @@ Phase 1 拆解 task 後，對每個 feature task：
 
 Phase 1 產出後直接進 Phase 2，不中斷問用戶。任務清單會寫入 state file，用戶可隨時查看。
 
+### Phase 2 Dispatch Routing（v5.10 摘要）
+
+完整 dispatch 決策以 SKILL.md「Dispatch Routing Matrix (v5.10)」與 `scripts/dispatch_router.py` 為準。reflex Q1-Q6 中的 Q4 拆成 4a/4b：
+
+- Q4 LLM 判斷類型：
+  - Q4a: abstraction / 泛型 / 設計模式 → 命中 matrix #4a (codex)
+  - Q4b: 命名 / UI / stylistic → 命中 matrix #4b (sonnet)
+
 ---
 
 ## Phase 3 — 交付驗收
