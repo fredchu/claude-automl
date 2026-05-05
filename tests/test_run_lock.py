@@ -53,3 +53,20 @@ def test_two_active_raises(tmp_path):
     _write_state(automl, "run-B", autonomous=True, lifecycle_state="active")
     with pytest.raises(run_lock.LockInvariantViolation):
         run_lock.find_active_autonomous(automl)
+
+
+def test_detect_codex_available_present(tmp_path, monkeypatch):
+    """codex_dispatch_role.py exists and executable → codex_available=True."""
+    import run_lock
+    fake = tmp_path / "codex_dispatch_role.py"
+    fake.write_text("#!/usr/bin/env python3\n")
+    fake.chmod(0o755)
+    monkeypatch.setattr(run_lock, "CODEX_DISPATCH_BIN", str(fake))
+    assert run_lock.detect_codex_available() is True
+
+
+def test_detect_codex_available_missing(tmp_path, monkeypatch):
+    """codex_dispatch_role.py absent → codex_available=False."""
+    import run_lock
+    monkeypatch.setattr(run_lock, "CODEX_DISPATCH_BIN", str(tmp_path / "nonexistent.py"))
+    assert run_lock.detect_codex_available() is False

@@ -6,10 +6,19 @@ This helper scans .automl/*/state.json to enforce that invariant.
 from __future__ import annotations
 
 import json
+import os
 from pathlib import Path
 
 
 ACTIVE_LIKE_STATES = frozenset({"active", "quota_wait"})
+
+# Codex dispatch helper (auto-detected at startup; written to state.env.codex_available per v5.10)
+CODEX_DISPATCH_BIN = os.path.expanduser("~/.claude/skills/codex-dispatch/scripts/codex_dispatch_role.py")
+
+
+def detect_codex_available() -> bool:
+    """True if codex_dispatch_role.py exists and is executable."""
+    return os.path.isfile(CODEX_DISPATCH_BIN) and os.access(CODEX_DISPATCH_BIN, os.X_OK)
 
 
 class LockInvariantViolation(Exception):
