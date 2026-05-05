@@ -563,21 +563,36 @@ Regression：{evaluator_regression}
 
 ---
 
-## Autonomous Mode (v5.8, opt-in)
+## Goal Mode (v5.10) / Autonomous Alias
 
-`/automl --autonomous` starts a run that self-wakes via ScheduleWakeup until
-it reaches a terminal state (`complete` / `failed` / `budgetLimited` /
-`cleared`) or is paused. Sync mode (no flag) preserves v5.6 behavior.
+`/automl --goal` starts a Tier 2 autonomous run that self-wakes via ScheduleWakeup
+until terminal state. Default has no budget cap / no Phase 3 retry cap (opt-in
+to caps via `--cap`). v5.10 deprecation alias: `/automl --autonomous` ≡ `/automl --goal --cap`.
+Sync mode (no flag) preserves v5.6 behavior.
 
-### Startup sequence
+### Flag matrix
 
-1. Run single-run lock check:
-   `python3 ~/.claude/skills/automl/scripts/run_lock.py {workdir}/.automl`
+| Flag | Behavior |
+|---|---|
+| `/automl` | Tier 0 sync |
+| `/automl --goal` | Tier 2: self-driven, **no budget cap, no Phase 3 retry cap**; quota gate / RED_TEAM hard stop / stuck task / context_critical / repeat-loop escape valve still active |
+| `/automl --goal --cap` | Tier 1: self-driven + soft caps (max_total_ticks=50, max_wall_minutes=480, Phase 3 retry_count<=2) |
+| `/automl --goal --cap --max-ticks=N --max-wall=M` | custom caps |
+| `/automl --autonomous` | v5.10 deprecation alias = `/automl --goal --cap` (removed v5.11) |
+| `/automl --no-codex` | applied as additional flag; codex rows fallback claude:sonnet |
+
+### Startup sequence (v5.10)
+
+1. Parse flags → state.flags{goal, cap, max_ticks_override, max_wall_override, no_codex}
+2. `--autonomous` alias: set goal=True, cap=True (warn deprecated, link to --goal)
+3. Run single-run lock check: `python3 ~/.claude/skills/automl/scripts/run_lock.py {workdir}/.automl`
    - If another active autonomous run exists → refuse, print run_id, suggest pause/clear
-2. Initialize state.json with `autonomous: true`, `lifecycle_state: "active"`,
-   `budget.started_at = now`, `state_version = 0`
-3. Run Phase 0/1 normally (System Context Dialogue NOT skippable per v5.6 hard rule)
-4. After Phase 1 complete and Phase 2 starts: enter autonomous tick loop
+4. Run codex auto-detect: `state.env.codex_available = run_lock.detect_codex_available()`
+   (writes True if codex-dispatch helper exists + executable; False otherwise)
+5. Initialize state.json with `autonomous=True`, `lifecycle_state="active"`,
+   `budget.started_at=now`, `state_version=0`, `schema_version="5.10"`
+6. Run Phase 0/1 normally (System Context Dialogue NOT skippable per v5.6 hard rule)
+7. After Phase 1 complete and Phase 2 starts: enter autonomous tick loop
 
 ### Tick gate sequence (FIXED ORDER)
 
