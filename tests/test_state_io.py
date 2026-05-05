@@ -159,3 +159,18 @@ def test_load_v5_9_state_default_fills_v5_10_flags(tmp_path):
         "no_codex": False,
     }
     assert state["env"] == {"codex_available": None}
+
+
+def test_load_v5_10_state_with_partial_flags(tmp_path):
+    """v5.10 state with partial flags → missing keys default-filled."""
+    p = tmp_path / "state.json"
+    p.write_text(json.dumps({
+        "schema_version": "5.10",
+        "flags": {"goal": True},
+    }))
+
+    state = state_io.load(p)
+
+    assert state["flags"]["goal"] is True
+    assert state["flags"]["cap"] is False
+    assert state["flags"]["no_codex"] is False
