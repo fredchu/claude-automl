@@ -675,6 +675,36 @@ Run {run_id} → {lifecycle_state}. {trigger_summary}. ScheduleWakeup +{N}s.
 
 **設計依據：** `company/_shared/lessons/2026-05-04-automl-tick-gate-output-discipline.md`
 
+### Hard Stops (v5.10) — `--goal` no-cap 模式仍生效
+
+無論 `--cap` 是否啟用，下列五個 hard stop 永遠生效，避免 `--goal` no-cap 失控：
+
+| Hard stop | 觸發條件 | 行為 |
+|---|---|---|
+| Quota gate | claude five_hour >= 75% / seven_day >= 75% / codex 5h >= 85% | quota_wait + ScheduleWakeup |
+| RED_TEAM BLOCKED | Phase 1.5c 自動修復 5 輪仍 BLOCKED | failed + Discord push |
+| Stuck task | 同 task 連續 5 輪 evaluator 卡住 | 標記 stuck，跳下一個 task |
+| Context critical | context >= 80% | context_critical + Discord push（用戶介入手動 /clear + resume） |
+| **Repeat-loop escape valve** | Phase 3 retry_log 最近 3 筆 reason hash 完全相同 | failed + Discord push「Phase 2 反覆修同問題」 |
+
+#### Repeat-loop escape valve 實作
+
+每次 Phase 3 step BLOCKED 觸發 retry 前 + Phase 2 修完回 Phase 3 step 1 前，
+跑 `repeat_loop_detector.detect_repeat_loop(state.phase3.retry_log)`：
+
+```python
+from scripts import repeat_loop_detector
+
+if repeat_loop_detector.detect_repeat_loop(state["phase3"]["retry_log"]):
+    transition → failed
+    Discord push idempotency_key=f"{run_id}:repeat_loop:{retry_log[-1]['ts']}"
+    log changelog "repeat-loop detected: 3x same reason → failed"
+    exit
+```
+
+Sliding window 行為：永遠看 retry_log 尾端 3 筆，新 reason 進來自然 slide forward，
+不需顯式 reset counter。詳見 `scripts/repeat_loop_detector.py` docstring。
+
 ### Post-tick re-check (after subagent returns)
 
 ```
