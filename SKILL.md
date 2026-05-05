@@ -973,14 +973,20 @@ described in the autonomous chapter.
 │       ├── 重試 1 次（同一 step）
 │       └── 連續 2 次異常 → 停止，報告 FINAL_VERIFICATION subagent 錯誤
 │
-├── step 2: RISK_REVIEW（可能多個 dispatch，按 phase3_skill 分組）
+├── step 2: RISK_REVIEW（v5.10 雙 reviewer cross-check）
 │   ├── 按 phase3_skill 分組 task 的 risk_scenarios + impact_path
 │   │   例：group_A（/investigate）= Task 1, 3 的 scenarios + impact_path；group_B（/cso）= Task 2 的 scenarios
-│   ├── 對每個 group 派一個 Claude agent (model="opus") 跑 RISK_REVIEW → 等回傳
-│   ├── 合併所有 group 的回傳結果
+│   ├── 對每個 group：
+│   │   ├── primary：派 Claude agent (model="opus") 跑 RISK_REVIEW → result_opus {status, bugs[]}
+│   │   ├── secondary（v5.10 新增，平行）：state.env.codex_available && !state.flags.no_codex → 派 codex:reviewer → result_codex {status, bugs[]}
+│   │   │   codex 不存在或 --no-codex → 跳過 secondary（opus 單跑，不 opus+sonnet 重複）
+│   │   └── merge：
+│   │       status = "has_bugs" if any({result_opus, result_codex}.status == "has_bugs") else "safe"
+│   │       bugs = union(result_opus.bugs, result_codex.bugs)（去重複，by hash of issue_id）
+│   ├── 合併所有 group 的 merged 結果
 │   │   ├── 全部 status == "safe" → 記錄結果，phase3.step = 3，繼續
 │   │   └── 任一 status == "has_bugs" → retry_count++，記錄 bug 到 retry_log，回 Phase 2
-│   └── 任一 group 回傳異常？ → 同上重試邏輯
+│   └── opus 異常 → 重試（既有邏輯）；codex 異常 → log warning + opus 單跑判定（不阻斷）
 │
 ├── step 3: 派 codex-worker / Claude agent (model="sonnet") 跑 DELIVERABLE_REVIEW → 等回傳
 │   ├── 環境偵測：檢查 /Users/fredchu/bin/codex-dispatch 是否存在
