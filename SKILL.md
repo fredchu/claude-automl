@@ -1,7 +1,8 @@
 ---
-name: automl
+name: automl-legacy
 version: 5.10.0
 description: |
+  [LEGACY v5.10 — frozen during /automl v6 migration window. Use /automl-legacy explicitly to invoke. Will be removed after v6.0 stabilizes.]
   Autonomous Evaluation Loop — 從對齊意圖到自主執行的完整引擎。
   四階段：Phase 0 釐清 → Phase 1 拆解定標準（含 System Context Dialogue） → Phase 2 執行+自我檢驗 loop → Phase 3 交付驗收。
   每個 Phase 可串接已安裝的 skill，也可以獨立跑（用戶已經想好目標就直接跳到 Phase 2）。
